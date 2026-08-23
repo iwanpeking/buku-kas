@@ -8,9 +8,11 @@ import "./index.css";
 /* ------------------------------------------------------------------
    Shim window.storage — meniru API persistent storage yang dipakai
    di lingkungan Claude Artifacts, tapi disambungkan ke tabel Supabase
-   (kv_store) yang DIBAGIKAN oleh semua orang yang login. Ini membuat
-   App.jsx bisa langsung dipakai tanpa diubah, tapi datanya sekarang
-   tersimpan di database pusat, bukan per-browser lagi.
+   (kv_store) yang PRIVAT per akun yang login (RLS membatasi ke
+   owner_id = auth.uid()). Dipakai App.jsx untuk data pribadi:
+   Uang Bulanan, Pengaturan, dan nama tanda tangan. Data project yang
+   dibagikan ke tim disimpan lewat tabel `projects` secara langsung
+   (lihat App.jsx), bukan lewat shim ini.
 ------------------------------------------------------------------ */
 window.storage = {
   async get(key) {
@@ -23,7 +25,11 @@ window.storage = {
     return { key, value: data.value };
   },
   async set(key, value) {
-    const { error } = await supabase.from("kv_store").upsert({ key, value, updated_at: new Date().toISOString() });
+    const { data: userData } = await supabase.auth.getUser();
+    const owner_id = userData?.user?.id;
+    const { error } = await supabase
+      .from("kv_store")
+      .upsert({ key, value, owner_id, updated_at: new Date().toISOString() });
     if (error) {
       console.error("storage.set error:", error);
       throw error;

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { supabase } from "./supabaseClient.js";
 import {
   Plus, Printer, Upload, CheckCircle2, ChevronLeft, ChevronRight,
   Trash2, X, Lock, Unlock, FolderPlus, Loader2, ArrowDownCircle,
   ArrowUpCircle, AlertCircle, Pencil, Camera, Download, DatabaseBackup, Eye, Settings2,
-  ClipboardList, ArrowRightCircle, CheckCircle
+  ClipboardList, ArrowRightCircle, CheckCircle, Users
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -127,24 +128,55 @@ export default function BukuKas() {
   const [previewRequest, setPreviewRequest] = useState(null);
   const [requestProjectFilter, setRequestProjectFilter] = useState("");
 
+  const [currentUser, setCurrentUser] = useState(null);
+  const projectDataRef = useRef({}); // projectId -> {name,status,selesaiAt,entries,requests}
+  const [showMembersModal, setShowMembersModal] = useState(false);
+  const [projectMembers, setProjectMembers] = useState([]);
+  const [membersBusy, setMembersBusy] = useState(false);
+
   /* ---------- load persisted data ---------- */
   useEffect(() => {
     (async () => {
       try {
-        const [e, p, sig, settings] = await Promise.all([
-          safeGet("bk_entries"),
-          safeGet("bk_projects"),
+        const { data: userData } = await supabase.auth.getUser();
+        setCurrentUser(userData?.user || null);
+
+        const [bulananRaw, sig, settings] = await Promise.all([
+          safeGet("bk_entries_bulanan"),
           safeGet("bk_signatures"),
           safeGet("bk_settings"),
         ]);
-        const req = await safeGet("bk_requests");
-        if (req) setRequests(JSON.parse(req.value));
-        if (e) setEntries(JSON.parse(e.value));
-        if (p) {
-          const parsed = JSON.parse(p.value);
-          setProjects(parsed);
-          if (parsed.length) setCurrentProjectId(parsed[0].id);
-        }
+        const bulananEntries = bulananRaw ? JSON.parse(bulananRaw.value) : [];
+
+        const { data: projectRows, error: projErr } = await supabase
+          .from("projects")
+          .select("*")
+          .order("created_at", { ascending: false });
+        if (projErr) throw projErr;
+
+        const projectsList = [];
+        const projectEntries = [];
+        const projectRequests = [];
+        (projectRows || []).forEach((row) => {
+          const d = row.data || {};
+          projectDataRef.current[row.id] = d;
+          projectsList.push({
+            id: row.id,
+            name: d.name || "(tanpa nama)",
+            status: d.status || "aktif",
+            selesaiAt: d.selesaiAt || null,
+            ownerId: row.owner_id,
+            createdAt: Date.parse(row.created_at),
+          });
+          (d.entries || []).forEach((e) => projectEntries.push({ ...e, scope: "project", projectId: row.id }));
+          (d.requests || []).forEach((r) => projectRequests.push({ ...r, projectId: row.id }));
+        });
+
+        setEntries([...bulananEntries, ...projectEntries]);
+        setProjects(projectsList);
+        setRequests(projectRequests);
+        if (projectsList.length) setCurrentProjectId(projectsList[0].id);
+
         if (sig) {
           const s = JSON.parse(sig.value);
           setPreparer(s.preparer || "");
@@ -158,6 +190,7 @@ export default function BukuKas() {
         }
       } catch (err) {
         console.error("Gagal memuat data:", err);
+        showToast("Gagal memuat data. Coba muat ulang halaman.", "error");
       } finally {
         setReady(true);
       }
@@ -172,25 +205,66 @@ export default function BukuKas() {
     }
   }
 
+  // Simpan seluruh array entries (bulanan + project tercampur, sesuai bentuk lama).
+  // Bagian bulanan disimpan privat; bagian project ditulis per-baris ke tabel `projects`
+  // (hanya project yang datanya benar-benar berubah).
   const persistEntries = useCallback(async (next) => {
     setEntries(next);
     try {
-      await window.storage.set("bk_entries", JSON.stringify(next), false);
+      const bulanan = next.filter((e) => e.scope === "bulanan");
+      await window.storage.set("bk_entries_bulanan", JSON.stringify(bulanan), false);
+
+      const byProject = {};
+      next.filter((e) => e.scope === "project").forEach((e) => {
+        (byProject[e.projectId] ||= []).push(e);
+      });
+      for (const p of projects) {
+        const newList = byProject[p.id] || [];
+        const cached = projectDataRef.current[p.id] || {};
+        const oldList = cached.entries || [];
+        if (JSON.stringify(oldList) !== JSON.stringify(newList)) {
+          const merged = { ...cached, entries: newList };
+          projectDataRef.current[p.id] = merged;
+          const { error } = await supabase
+            .from("projects")
+            .update({ data: merged, updated_at: new Date().toISOString() })
+            .eq("id", p.id);
+          if (error) throw error;
+        }
+      }
     } catch (err) {
       console.error(err);
       showToast("Gagal menyimpan data ke penyimpanan.", "error");
     }
-  }, []);
+  }, [projects]);
 
-  const persistProjects = useCallback(async (next) => {
-    setProjects(next);
+  // Simpan seluruh array requests (permintaan dana), ditulis per-project ke tabel `projects`.
+  const persistRequests = useCallback(async (next) => {
+    setRequests(next);
     try {
-      await window.storage.set("bk_projects", JSON.stringify(next), false);
+      const byProject = {};
+      next.forEach((r) => {
+        (byProject[r.projectId] ||= []).push(r);
+      });
+      for (const p of projects) {
+        const newList = byProject[p.id] || [];
+        const cached = projectDataRef.current[p.id] || {};
+        const oldList = cached.requests || [];
+        if (JSON.stringify(oldList) !== JSON.stringify(newList)) {
+          const merged = { ...cached, requests: newList };
+          projectDataRef.current[p.id] = merged;
+          const { error } = await supabase
+            .from("projects")
+            .update({ data: merged, updated_at: new Date().toISOString() })
+            .eq("id", p.id);
+          if (error) throw error;
+        }
+      }
     } catch (err) {
       console.error(err);
-      showToast("Gagal menyimpan data project.", "error");
+      showToast("Gagal menyimpan data permintaan dana.", "error");
     }
-  }, []);
+  }, [projects]);
 
   const persistSignatures = useCallback(async (p, c) => {
     try {
@@ -208,16 +282,6 @@ export default function BukuKas() {
     }
   }, []);
 
-  const persistRequests = useCallback(async (next) => {
-    setRequests(next);
-    try {
-      await window.storage.set("bk_requests", JSON.stringify(next), false);
-    } catch (err) {
-      console.error(err);
-      showToast("Gagal menyimpan data permintaan dana.", "error");
-    }
-  }, []);
-
   function showToast(msg, kind = "info") {
     setToast({ msg, kind });
     setTimeout(() => setToast(null), 3200);
@@ -225,7 +289,7 @@ export default function BukuKas() {
 
   /* ---------- backup / restore ---------- */
   function exportBackup() {
-    const payload = { projects, entries, preparer, checker, exportedAt: new Date().toISOString(), version: 1 };
+    const payload = { projects, entries, preparer, checker, exportedAt: new Date().toISOString(), version: 2 };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -257,17 +321,51 @@ export default function BukuKas() {
     if (importRef.current) importRef.current.value = "";
   }
 
+  // Pemulihan cadangan: entri bulanan digabung ke data privat; setiap project dari
+  // cadangan dibuat sebagai project BARU (milik akun yang sedang login) berikut
+  // entri & permintaan dananya, supaya tidak bentrok dengan project yang sudah ada.
   async function confirmImport() {
     if (!pendingImport) return;
-    await persistEntries(pendingImport.entries || []);
-    await persistProjects(pendingImport.projects || []);
-    const p = pendingImport.preparer || "";
-    const c = pendingImport.checker || "";
-    setPreparer(p);
-    setChecker(c);
-    await persistSignatures(p, c);
-    setPendingImport(null);
-    showToast("Data berhasil dipulihkan dari cadangan.");
+    try {
+      const bulananFromBackup = (pendingImport.entries || []).filter((e) => e.scope === "bulanan");
+      const existingBulanan = entries.filter((e) => e.scope === "bulanan");
+      const mergedBulanan = [...existingBulanan, ...bulananFromBackup];
+      await window.storage.set("bk_entries_bulanan", JSON.stringify(mergedBulanan), false);
+
+      const newProjectsList = [];
+      const newProjectEntries = [];
+      for (const oldProj of pendingImport.projects || []) {
+        const oldEntries = (pendingImport.entries || []).filter((e) => e.scope === "project" && e.projectId === oldProj.id);
+        const data = {
+          name: oldProj.name,
+          status: oldProj.status || "aktif",
+          selesaiAt: oldProj.selesaiAt || null,
+          entries: [],
+          requests: [],
+        };
+        const { data: row, error } = await supabase.from("projects").insert({ data }).select().single();
+        if (error) throw error;
+        projectDataRef.current[row.id] = { ...data, entries: oldEntries.map((e) => ({ ...e, projectId: row.id })) };
+        const finalData = { ...data, entries: oldEntries.map((e) => ({ ...e, projectId: row.id })) };
+        await supabase.from("projects").update({ data: finalData }).eq("id", row.id);
+        newProjectsList.push({ id: row.id, name: data.name, status: data.status, selesaiAt: data.selesaiAt, ownerId: row.owner_id, createdAt: Date.parse(row.created_at) });
+        newProjectEntries.push(...finalData.entries);
+      }
+
+      setEntries([...mergedBulanan, ...newProjectEntries]);
+      setProjects((prev) => [...newProjectsList, ...prev]);
+
+      const p = pendingImport.preparer || "";
+      const c = pendingImport.checker || "";
+      setPreparer(p);
+      setChecker(c);
+      await persistSignatures(p, c);
+      setPendingImport(null);
+      showToast("Data berhasil dipulihkan dari cadangan (project dari cadangan dibuat sebagai project baru).");
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal memulihkan cadangan.", "error");
+    }
   }
 
   /* ---------- derived data ---------- */
@@ -350,30 +448,110 @@ export default function BukuKas() {
 
   /* ---------- project management ---------- */
   async function createProject(name) {
-    const p = { id: uid(), name, status: "aktif", createdAt: Date.now() };
-    const next = [p, ...projects];
-    await persistProjects(next);
-    setCurrentProjectId(p.id);
-    setShowProjectModal(false);
-    showToast(`Project "${name}" dibuat.`);
+    try {
+      const data = { name, status: "aktif", selesaiAt: null, entries: [], requests: [] };
+      const { data: row, error } = await supabase.from("projects").insert({ data }).select().single();
+      if (error) throw error;
+      projectDataRef.current[row.id] = data;
+      const newProj = { id: row.id, name, status: "aktif", selesaiAt: null, ownerId: row.owner_id, createdAt: Date.parse(row.created_at) };
+      setProjects((prev) => [newProj, ...prev]);
+      setCurrentProjectId(row.id);
+      setShowProjectModal(false);
+      showToast(`Project "${name}" dibuat.`);
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal membuat project.", "error");
+    }
   }
   async function renameProject(id, newName) {
-    const next = projects.map((p) => (p.id === id ? { ...p, name: newName } : p));
-    await persistProjects(next);
-    setRenamingProject(null);
-    showToast("Nama project diperbarui.");
+    try {
+      const cached = projectDataRef.current[id] || {};
+      const merged = { ...cached, name: newName };
+      const { error } = await supabase.from("projects").update({ data: merged, updated_at: new Date().toISOString() }).eq("id", id);
+      if (error) throw error;
+      projectDataRef.current[id] = merged;
+      setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name: newName } : p)));
+      setRenamingProject(null);
+      showToast("Nama project diperbarui.");
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal mengubah nama project.", "error");
+    }
   }
   async function toggleProjectLock() {
     if (!currentProject) return;
-    const willLock = currentProject.status !== "selesai";
-    const next = projects.map((p) =>
-      p.id === currentProject.id
-        ? { ...p, status: willLock ? "selesai" : "aktif", selesaiAt: willLock ? todayISO() : null }
-        : p
-    );
-    await persistProjects(next);
-    showToast(willLock ? "Project ditandai selesai & dikunci." : "Project dibuka kembali.");
-    setConfirmLock(false);
+    try {
+      const willLock = currentProject.status !== "selesai";
+      const selesaiAt = willLock ? todayISO() : null;
+      const cached = projectDataRef.current[currentProject.id] || {};
+      const merged = { ...cached, status: willLock ? "selesai" : "aktif", selesaiAt };
+      const { error } = await supabase
+        .from("projects")
+        .update({ data: merged, updated_at: new Date().toISOString() })
+        .eq("id", currentProject.id);
+      if (error) throw error;
+      projectDataRef.current[currentProject.id] = merged;
+      setProjects((prev) => prev.map((p) => (p.id === currentProject.id ? { ...p, status: merged.status, selesaiAt } : p)));
+      showToast(willLock ? "Project ditandai selesai & dikunci." : "Project dibuka kembali.");
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal mengubah status project.", "error");
+    } finally {
+      setConfirmLock(false);
+    }
+  }
+
+  /* ---------- anggota project ---------- */
+  async function openMembersModal() {
+    if (!currentProject) return;
+    setMembersBusy(true);
+    setShowMembersModal(true);
+    try {
+      const { data, error } = await supabase.from("project_members").select("email").eq("project_id", currentProject.id);
+      if (error) throw error;
+      setProjectMembers((data || []).map((r) => r.email));
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal memuat daftar anggota.", "error");
+    } finally {
+      setMembersBusy(false);
+    }
+  }
+  async function inviteMember(email) {
+    if (!currentProject || !email.trim()) return;
+    setMembersBusy(true);
+    try {
+      const { error } = await supabase
+        .from("project_members")
+        .insert({ project_id: currentProject.id, email: email.trim().toLowerCase() });
+      if (error) throw error;
+      setProjectMembers((prev) => [...prev, email.trim().toLowerCase()]);
+      showToast(`${email.trim()} ditambahkan ke project.`);
+    } catch (err) {
+      console.error(err);
+      showToast(err.message?.includes("duplicate") ? "Orang ini sudah jadi anggota." : "Gagal menambahkan anggota.", "error");
+    } finally {
+      setMembersBusy(false);
+    }
+  }
+  async function removeMember(email) {
+    if (!currentProject) return;
+    setMembersBusy(true);
+    try {
+      const { error } = await supabase
+        .from("project_members")
+        .delete()
+        .eq("project_id", currentProject.id)
+        .eq("email", email);
+      if (error) throw error;
+      setProjectMembers((prev) => prev.filter((e) => e !== email));
+      showToast(`${email} dikeluarkan dari project.`);
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal mengeluarkan anggota.", "error");
+    } finally {
+      setMembersBusy(false);
+    }
   }
 
   /* ---------- permintaan dana ---------- */
@@ -861,6 +1039,15 @@ export default function BukuKas() {
                   {currentProject.status === "selesai" ? "Buka Kunci" : "Tandai Selesai"}
                 </button>
               )}
+              {currentProject && currentUser && currentProject.ownerId === currentUser.id && (
+                <button
+                  onClick={openMembersModal}
+                  className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-md font-medium"
+                  style={{ border: `1px solid ${T.line}`, color: T.ink, background: T.white }}
+                >
+                  <Users size={15} /> Kelola Anggota
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-2 flex-wrap">
@@ -1204,6 +1391,16 @@ export default function BukuKas() {
           confirmLabel={currentProject.status === "selesai" ? "Buka Kunci" : "Tandai Selesai"}
           onCancel={() => setConfirmLock(false)}
           onConfirm={toggleProjectLock}
+        />
+      )}
+      {showMembersModal && currentProject && (
+        <MembersModal
+          projectName={currentProject.name}
+          members={projectMembers}
+          busy={membersBusy}
+          onInvite={inviteMember}
+          onRemove={removeMember}
+          onClose={() => setShowMembersModal(false)}
         />
       )}
       {pendingImport && (
@@ -1729,5 +1926,48 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
         </div>
       </div>
     </div>
+  );
+}
+
+function MembersModal({ projectName, members, busy, onInvite, onRemove, onClose }) {
+  const [email, setEmail] = useState("");
+  return (
+    <ModalShell onClose={onClose} title={`Anggota Project — ${projectName}`}>
+      <p className="text-xs mb-3" style={{ color: T.inkSoft }}>
+        Orang yang diundang harus sudah punya akun (didaftarkan lewat Supabase). Setelah diundang,
+        mereka bisa melihat dan mengedit seluruh data project ini.
+      </p>
+
+      <div className="flex gap-2 mb-4">
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+          placeholder="email@contoh.com" className="flex-1 text-sm px-3 py-2 rounded-md"
+          style={{ border: `1px solid ${T.line}` }} />
+        <button
+          onClick={() => { if (email.trim()) { onInvite(email); setEmail(""); } }}
+          disabled={busy || !email.trim()}
+          className="px-3 py-2 rounded-md text-sm font-medium disabled:opacity-40"
+          style={{ background: T.brass, color: T.white }}
+        >
+          Undang
+        </button>
+      </div>
+
+      <p className="text-xs font-medium mb-2" style={{ color: T.inkSoft }}>Anggota saat ini</p>
+      {members.length === 0 && (
+        <p className="text-sm mb-2" style={{ color: T.inkSoft }}>Belum ada anggota lain diundang — project ini masih pribadi.</p>
+      )}
+      <div className="space-y-1.5 mb-2">
+        {members.map((m) => (
+          <div key={m} className="flex items-center justify-between text-sm px-3 py-2 rounded-md"
+            style={{ background: T.paperDark }}>
+            <span>{m}</span>
+            <button onClick={() => onRemove(m)} disabled={busy}
+              className="text-xs font-medium disabled:opacity-40" style={{ color: T.keluar }}>
+              Keluarkan
+            </button>
+          </div>
+        ))}
+      </div>
+    </ModalShell>
   );
 }
