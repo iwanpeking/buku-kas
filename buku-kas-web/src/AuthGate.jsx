@@ -16,12 +16,10 @@ const T = {
 
 export default function AuthGate({ children }) {
   const [session, setSession] = useState(undefined); // undefined = belum dicek, null = belum login
-  const [mode, setMode] = useState("login"); // 'login' | 'register'
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -32,18 +30,10 @@ export default function AuthGate({ children }) {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
-    setInfo("");
     setBusy(true);
     try {
-      if (mode === "login") {
-        const { error: err } = await supabase.auth.signInWithPassword({ email, password });
-        if (err) throw err;
-      } else {
-        const { error: err } = await supabase.auth.signUp({ email, password });
-        if (err) throw err;
-        setInfo("Akun dibuat. Kalau diminta verifikasi email, cek inbox Anda lalu login.");
-        setMode("login");
-      }
+      const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+      if (err) throw err;
     } catch (err) {
       setError(err.message || "Terjadi kesalahan. Coba lagi.");
     } finally {
@@ -67,19 +57,7 @@ export default function AuthGate({ children }) {
             <div style={{ width: 40, height: 40, borderRadius: 8, background: T.brass, color: T.white }}
               className="flex items-center justify-center font-bold text-lg mx-auto mb-2">Rp</div>
             <h1 className="text-xl font-semibold" style={{ color: T.ink }}>Buku Kas</h1>
-            <p className="text-xs mt-1" style={{ color: T.inkSoft }}>
-              {mode === "login" ? "Masuk untuk mengakses data bersama" : "Daftar akun baru"}
-            </p>
-          </div>
-
-          <div className="flex gap-1 mb-4 p-1 rounded-md" style={{ background: T.paperDark }}>
-            {[{ k: "login", l: "Masuk" }, { k: "register", l: "Daftar" }].map((t) => (
-              <button key={t.k} type="button" onClick={() => { setMode(t.k); setError(""); setInfo(""); }}
-                className="flex-1 text-sm font-medium py-1.5 rounded"
-                style={{ background: mode === t.k ? T.white : "transparent", color: mode === t.k ? T.ink : T.inkSoft }}>
-                {t.l}
-              </button>
-            ))}
+            <p className="text-xs mt-1" style={{ color: T.inkSoft }}>Masuk untuk mengakses data bersama</p>
           </div>
 
           <form onSubmit={handleSubmit}>
@@ -89,22 +67,20 @@ export default function AuthGate({ children }) {
 
             <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Password</label>
             <input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)}
-              className="w-full text-sm px-3 py-2 rounded-md mb-1" style={{ border: `1px solid ${T.line}` }} />
-            <p className="text-xs mb-3" style={{ color: T.inkSoft }}>Minimal 6 karakter.</p>
+              className="w-full text-sm px-3 py-2 rounded-md mb-3" style={{ border: `1px solid ${T.line}` }} />
 
             {error && <p className="text-xs mb-3" style={{ color: T.keluar }}>{error}</p>}
-            {info && <p className="text-xs mb-3" style={{ color: T.brassDark }}>{info}</p>}
 
             <button type="submit" disabled={busy}
               className="w-full py-2 rounded-md text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
               style={{ background: T.brass, color: T.white }}>
               {busy && <Loader2 size={14} className="animate-spin" />}
-              {mode === "login" ? "Masuk" : "Daftar"}
+              Masuk
             </button>
           </form>
 
           <p className="text-xs text-center mt-4" style={{ color: T.inkSoft }}>
-            Semua orang yang login di sini akan melihat data yang sama.
+            Belum punya akun? Hubungi admin untuk didaftarkan.
           </p>
         </div>
       </div>
