@@ -859,11 +859,11 @@ export default function BukuKas() {
     </table>
     <div class="sig">
       <div class="col">
-        <div class="name">${escapeHtml(preparer) || "\u00A0"}</div>
+        <div class="name">${escapeHtml(req.dibuatOleh || preparer) || "\u00A0"}</div>
         <div class="lbl">DIAJUKAN OLEH</div>
       </div>
       <div class="col">
-        <div class="name">${escapeHtml(checker) || "\u00A0"}</div>
+        <div class="name">${escapeHtml(req.diperiksaOleh || checker) || "\u00A0"}</div>
         <div class="lbl">DISETUJUI OLEH</div>
       </div>
     </div>
@@ -1420,6 +1420,8 @@ export default function BukuKas() {
           projects={projects}
           existingCenters={uniqueCenters}
           defaultProjectId={requestProjectFilter || projects[0]?.id || ""}
+          defaultPreparer={preparer}
+          defaultChecker={checker}
           onClose={() => { setShowRequestModal(false); setEditingRequest(null); }}
           onSave={saveRequest}
         />
@@ -1442,6 +1444,22 @@ export default function BukuKas() {
                 <button onClick={() => setShowPreview(false)} className="p-1.5 rounded hover:bg-white/10">
                   <X size={18} />
                 </button>
+              </div>
+            </div>
+            <div className="flex-shrink-0 grid grid-cols-2 gap-3 px-4 py-3" style={{ background: T.paperDark, borderBottom: `1px solid ${T.line}` }}>
+              <div>
+                <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Dibuat oleh</label>
+                <input value={preparer} onChange={(e) => setPreparer(e.target.value)}
+                  onBlur={() => persistSignatures(preparer, checker)}
+                  placeholder="Nama" className="w-full text-sm px-2 py-1.5 rounded-md"
+                  style={{ border: `1px solid ${T.line}` }} />
+              </div>
+              <div>
+                <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Diperiksa oleh</label>
+                <input value={checker} onChange={(e) => setChecker(e.target.value)}
+                  onBlur={() => persistSignatures(preparer, checker)}
+                  placeholder="Nama" className="w-full text-sm px-2 py-1.5 rounded-md"
+                  style={{ border: `1px solid ${T.line}` }} />
               </div>
             </div>
             <iframe title="Pratinjau Laporan" srcDoc={buildReportHTML({ preview: true })} className="flex-1 w-full border-0" />
@@ -1756,11 +1774,13 @@ function EntryModal({ initial, existingCenters = [], apiKey, onClose, onSave }) 
   );
 }
 
-function RequestModal({ initial, projects, existingCenters = [], defaultProjectId, onClose, onSave }) {
+function RequestModal({ initial, projects, existingCenters = [], defaultProjectId, defaultPreparer = "", defaultChecker = "", onClose, onSave }) {
   const [projectId, setProjectId] = useState(initial?.projectId || defaultProjectId || "");
   const [tanggal, setTanggal] = useState(initial?.tanggal || todayISO());
   const [peminta, setPeminta] = useState(initial?.peminta || "");
   const [keterangan, setKeterangan] = useState(initial?.keterangan || "");
+  const [dibuatOleh, setDibuatOleh] = useState(initial?.dibuatOleh ?? defaultPreparer);
+  const [diperiksaOleh, setDiperiksaOleh] = useState(initial?.diperiksaOleh ?? defaultChecker);
   const [items, setItems] = useState(
     initial?.items?.length ? initial.items.map((it) => ({ center: "", ...it })) : [{ id: uid(), center: "", nama: "", qty: "", harga: "" }]
   );
@@ -1786,6 +1806,8 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
       tanggal,
       peminta: peminta.trim(),
       keterangan: keterangan.trim(),
+      dibuatOleh: dibuatOleh.trim(),
+      diperiksaOleh: diperiksaOleh.trim(),
       items: items
         .filter((it) => it.nama.trim())
         .map((it) => ({ id: it.id, center: (it.center || "").trim(), nama: it.nama.trim(), qty: Number(it.qty) || 0, harga: Number(it.harga) || 0 })),
@@ -1829,6 +1851,16 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
             <input value={keterangan} onChange={(e) => setKeterangan(e.target.value)}
               placeholder="mis. Belanja material minggu ke-3" className="w-full text-sm px-3 py-2 rounded-md"
               style={{ border: `1px solid ${T.line}` }} />
+          </div>
+          <div>
+            <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Dibuat oleh (untuk tanda tangan)</label>
+            <input value={dibuatOleh} onChange={(e) => setDibuatOleh(e.target.value)}
+              placeholder="Nama" className="w-full text-sm px-3 py-2 rounded-md" style={{ border: `1px solid ${T.line}` }} />
+          </div>
+          <div>
+            <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Diperiksa/disetujui oleh (untuk tanda tangan)</label>
+            <input value={diperiksaOleh} onChange={(e) => setDiperiksaOleh(e.target.value)}
+              placeholder="Nama" className="w-full text-sm px-3 py-2 rounded-md" style={{ border: `1px solid ${T.line}` }} />
           </div>
         </div>
 
