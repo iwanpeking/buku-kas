@@ -587,15 +587,11 @@ export default function BukuKas() {
   async function convertRequestToExpense(req) {
     const project = projects.find((p) => p.id === req.projectId);
     const items = req.items || [];
-    const groups = {};
-    items.forEach((it) => {
-      const key = (it.center || "").trim();
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(it);
-    });
-    const newEntries = Object.entries(groups).map(([center, its]) => {
-      const subtotal = its.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.harga) || 0), 0);
-      const names = its.map((i) => i.nama).filter(Boolean);
+    // Satu baris buku kas per item, supaya rincian belanja (nama, qty, harga)
+    // langsung terlihat di laporan — bukan dirangkum jadi satu baris saja.
+    const newEntries = items.map((it) => {
+      const qty = Number(it.qty) || 0;
+      const harga = Number(it.harga) || 0;
       return {
         id: uid(),
         scope: "project",
@@ -603,21 +599,16 @@ export default function BukuKas() {
         projectId: req.projectId,
         createdAt: Date.now(),
         tanggal: req.tanggal,
-        center,
-        keterangan: `Permintaan Dana — ${names.slice(0, 3).join(", ")}${names.length > 3 ? ", ..." : ""}`,
+        center: it.center || "",
+        keterangan: `${it.nama} (${qty} x ${rupiah(harga)})${req.keterangan ? " — " + req.keterangan : ""}`,
         masuk: 0,
-        keluar: subtotal,
+        keluar: qty * harga,
       };
     });
     await persistEntries([...entries, ...newEntries]);
     const nextReq = requests.map((r) => (r.id === req.id ? { ...r, entryId: newEntries.map((e) => e.id).join(",") } : r));
     await persistRequests(nextReq);
-    const centerCount = Object.keys(groups).length;
-    showToast(
-      centerCount > 1
-        ? `Dicatat sebagai ${centerCount} pengeluaran (per Center) di project "${project?.name || ""}".`
-        : `Dicatat sebagai pengeluaran di project "${project?.name || ""}".`
-    );
+    showToast(`Dicatat sebagai ${newEntries.length} baris pengeluaran di project "${project?.name || ""}".`);
   }
 
   function escapeHtml(s) {
