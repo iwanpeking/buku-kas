@@ -133,6 +133,7 @@ export default function BukuKas() {
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [projectMembers, setProjectMembers] = useState([]);
   const [membersBusy, setMembersBusy] = useState(false);
+  const [transferringRequest, setTransferringRequest] = useState(null);
 
   /* ---------- load persisted data ---------- */
   useEffect(() => {
@@ -609,6 +610,27 @@ export default function BukuKas() {
     const nextReq = requests.map((r) => (r.id === req.id ? { ...r, entryId: newEntries.map((e) => e.id).join(",") } : r));
     await persistRequests(nextReq);
     showToast(`Dicatat sebagai ${newEntries.length} baris pengeluaran di project "${project?.name || ""}".`);
+  }
+
+  async function recordTransferReceived(req, tanggal, jumlah, catatan) {
+    const project = projects.find((p) => p.id === req.projectId);
+    const newEntry = {
+      id: uid(),
+      scope: "project",
+      bulan: null,
+      projectId: req.projectId,
+      createdAt: Date.now(),
+      tanggal,
+      center: "",
+      keterangan: catatan?.trim() ? catatan.trim() : `Terima dana dari Accounting (Permintaan Dana ${dateLabelID(req.tanggal)})`,
+      masuk: jumlah,
+      keluar: 0,
+    };
+    await persistEntries([...entries, newEntry]);
+    const nextReq = requests.map((r) => (r.id === req.id ? { ...r, transferId: newEntry.id } : r));
+    await persistRequests(nextReq);
+    setTransferringRequest(null);
+    showToast(`Penerimaan dana dicatat di project "${project?.name || ""}".`);
   }
 
   function escapeHtml(s) {
@@ -1120,7 +1142,7 @@ export default function BukuKas() {
                       <Th>Keperluan</Th>
                       <Th style={{ width: 90 }}>Item</Th>
                       <Th align="right">Grand Total</Th>
-                      <Th style={{ width: 110 }}>Status</Th>
+                      <Th style={{ width: 150 }}>Status</Th>
                       <Th style={{ width: 130 }}></Th>
                     </tr>
                   </thead>
@@ -1148,14 +1170,29 @@ export default function BukuKas() {
                           <Td>{(r.items || []).length} item</Td>
                           <Td align="right" className="bk-mono font-semibold">{rupiah(grand)}</Td>
                           <Td>
-                            {r.entryId ? (
-                              <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full"
-                                style={{ background: T.masukBg, color: T.masuk }}>
-                                <CheckCircle size={11} /> Dicatat
-                              </span>
-                            ) : (
-                              <span className="text-xs" style={{ color: T.inkSoft }}>Belum dicatat</span>
-                            )}
+                            <div className="flex flex-col gap-1">
+                              {r.entryId ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full w-fit"
+                                  style={{ background: T.masukBg, color: T.masuk }}>
+                                  <CheckCircle size={11} /> Dicatat
+                                </span>
+                              ) : (
+                                <span className="text-xs" style={{ color: T.inkSoft }}>Belum dicatat</span>
+                              )}
+                              {r.entryId && (
+                                r.transferId ? (
+                                  <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full w-fit"
+                                    style={{ background: T.brass + "22", color: T.brassDark }}>
+                                    <CheckCircle size={11} /> Dana Diterima
+                                  </span>
+                                ) : (
+                                  <button onClick={(e) => { e.stopPropagation(); setTransferringRequest(r); }}
+                                    className="text-xs font-medium underline text-left w-fit" style={{ color: T.brassDark }}>
+                                    + Catat Terima Dana
+                                  </button>
+                                )
+                              )}
+                            </div>
                           </Td>
                           <Td align="right">
                             <div className="flex items-center gap-1 justify-end" onClick={(e) => e.stopPropagation()}>
@@ -1392,6 +1429,14 @@ export default function BukuKas() {
           onInvite={inviteMember}
           onRemove={removeMember}
           onClose={() => setShowMembersModal(false)}
+        />
+      )}
+      {transferringRequest && (
+        <TransferModal
+          request={transferringRequest}
+          defaultAmount={requestTotal(transferringRequest)}
+          onClose={() => setTransferringRequest(null)}
+          onSave={(tanggal, jumlah, catatan) => recordTransferReceived(transferringRequest, tanggal, jumlah, catatan)}
         />
       )}
       {pendingImport && (
@@ -1991,6 +2036,51 @@ function MembersModal({ projectName, members, busy, onInvite, onRemove, onClose 
           </div>
         ))}
       </div>
+    </ModalShell>
+  );
+}
+
+function TransferModal({ request, defaultAmount, onClose, onSave }) {
+  const [tanggal, setTanggal] = useState(todayISO());
+  const [jumlah, setJumlah] = useState(String(defaultAmount || ""));
+  const [catatan, setCatatan] = useState("");
+
+  function handleSubmit() {
+    const amount = Number(jumlah) || 0;
+    if (!tanggal || amount <= 0) return;
+    onSave(tanggal, amount, catatan);
+  }
+
+  return (
+    <ModalShell onClose={onClose} title="Catat Terima Dana dari Accounting">
+      <p className="text-xs mb-4" style={{ color: T.inkSoft }}>
+        Ini akan menambahkan satu baris <b>Uang Masuk</b> di buku kas project ini, mencatat
+        tanggal dan jumlah dana yang benar-benar ditransfer accounting untuk permintaan dana ini.
+      </p>
+
+      <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Tanggal Diterima</label>
+      <input type="date" value={tanggal} onChange={(e) => setTanggal(e.target.value)}
+        className="w-full text-sm px-3 py-2 rounded-md mb-3" style={{ border: `1px solid ${T.line}` }} />
+
+      <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Jumlah Diterima (Rp)</label>
+      <input type="number" value={jumlah} onChange={(e) => setJumlah(e.target.value)}
+        placeholder="0" className="bk-mono w-full text-sm px-3 py-2 rounded-md mb-1"
+        style={{ border: `1px solid ${T.line}` }} />
+      <p className="text-xs mb-3" style={{ color: T.inkSoft }}>
+        Otomatis terisi sesuai Grand Total permintaan ({rupiah(defaultAmount)}) — ubah kalau jumlah yang ditransfer beda.
+      </p>
+
+      <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Keterangan (opsional)</label>
+      <input value={catatan} onChange={(e) => setCatatan(e.target.value)}
+        placeholder={`Terima dana dari Accounting (Permintaan Dana ${dateLabelID(request.tanggal)})`}
+        className="w-full text-sm px-3 py-2 rounded-md mb-4" style={{ border: `1px solid ${T.line}` }} />
+
+      <button onClick={handleSubmit}
+        disabled={!tanggal || !(Number(jumlah) > 0)}
+        className="w-full py-2 rounded-md text-sm font-medium disabled:opacity-40"
+        style={{ background: T.brass, color: T.white }}>
+        Simpan
+      </button>
     </ModalShell>
   );
 }
