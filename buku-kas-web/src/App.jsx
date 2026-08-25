@@ -59,6 +59,13 @@ const FONTS = `
 const rupiah = (n) =>
   "Rp " + Math.round(Number(n) || 0).toLocaleString("id-ID");
 
+const formatNoPD = (code) => code || "";
+// "0826" untuk Agustus 2026 (bulan-tahun 2 digit), dipakai sebagai bagian nomor permintaan dana
+const periodCodeMMYY = (tanggalISO) => {
+  const [y, m] = (tanggalISO || todayISO()).split("-");
+  return m + y.slice(2);
+};
+
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
@@ -134,6 +141,7 @@ export default function BukuKas() {
   const [projectMembers, setProjectMembers] = useState([]);
   const [membersBusy, setMembersBusy] = useState(false);
   const [transferringRequest, setTransferringRequest] = useState(null);
+  const [convertingRequest, setConvertingRequest] = useState(null);
 
   /* ---------- load persisted data ---------- */
   useEffect(() => {
@@ -570,9 +578,12 @@ export default function BukuKas() {
       await persistRequests(next);
       showToast("Permintaan dana diperbarui.");
     } else {
-      const newReq = { id: uid(), createdAt: Date.now(), entryId: null, ...data };
+      const period = periodCodeMMYY(data.tanggal);
+      const seqSamePeriod = requests.filter((r) => (r.noPermintaan || "").includes(`-${period}-`)).length;
+      const noPermintaan = `PD-${period}-${String(seqSamePeriod + 1).padStart(3, "0")}`;
+      const newReq = { id: uid(), createdAt: Date.now(), entryId: null, noPermintaan, ...data };
       await persistRequests([...requests, newReq]);
-      showToast("Permintaan dana disimpan.");
+      showToast(`Permintaan dana ${noPermintaan} disimpan.`);
     }
     setShowRequestModal(false);
     setEditingRequest(null);
@@ -585,9 +596,10 @@ export default function BukuKas() {
   function requestTotal(req) {
     return (req.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.harga) || 0), 0);
   }
-  async function convertRequestToExpense(req) {
+  async function convertRequestToExpense(req, tanggalPencatatan) {
     const project = projects.find((p) => p.id === req.projectId);
     const items = req.items || [];
+    const tanggal = tanggalPencatatan || req.tanggal;
     // Satu baris buku kas per item, supaya rincian belanja (nama, qty, harga)
     // langsung terlihat di laporan — bukan dirangkum jadi satu baris saja.
     const newEntries = items.map((it) => {
@@ -599,8 +611,9 @@ export default function BukuKas() {
         bulan: null,
         projectId: req.projectId,
         createdAt: Date.now(),
-        tanggal: req.tanggal,
+        tanggal,
         center: it.center || "",
+        noPermintaan: req.noPermintaan || null,
         keterangan: `${it.nama} (${qty} x ${rupiah(harga)})${req.keterangan ? " — " + req.keterangan : ""}`,
         masuk: 0,
         keluar: qty * harga,
@@ -609,6 +622,7 @@ export default function BukuKas() {
     await persistEntries([...entries, ...newEntries]);
     const nextReq = requests.map((r) => (r.id === req.id ? { ...r, entryId: newEntries.map((e) => e.id).join(",") } : r));
     await persistRequests(nextReq);
+    setConvertingRequest(null);
     showToast(`Dicatat sebagai ${newEntries.length} baris pengeluaran di project "${project?.name || ""}".`);
   }
 
@@ -652,12 +666,13 @@ export default function BukuKas() {
         <td class="mono nowrap" style="text-align:center;color:#8a8672">${r.no}</td>
         <td class="mono nowrap">${dateLabelID(r.tanggal)}</td>
         <td>${escapeHtml(r.center || "—")}</td>
+        ${mode === "project" ? `<td class="mono nowrap" style="color:#7C5E20">${escapeHtml(formatNoPD(r.noPermintaan) || "—")}</td>` : ""}
         <td>${escapeHtml(r.keterangan)}</td>
         <td class="mono nowrap amount" style="text-align:right;color:#2E6B4F;font-weight:500">${r.masuk ? rupiah(r.masuk) : "—"}</td>
         <td class="mono nowrap amount" style="text-align:right;color:#9C3B34;font-weight:500">${r.keluar ? rupiah(r.keluar) : "—"}</td>
         <td class="mono nowrap amount" style="text-align:right;font-weight:700">${rupiah(r.saldo)}</td>
       </tr>`).join("");
-    const colCount = 7;
+    const colCount = mode === "project" ? 8 : 7;
     return `<!DOCTYPE html>
 <html lang="id"><head><meta charset="UTF-8">
 <title>${escapeHtml(scopeTitle)} — ${escapeHtml(scopeSub)}</title>
@@ -748,12 +763,13 @@ export default function BukuKas() {
       <thead><tr>
         <th class="nowrap">No</th><th class="nowrap">Tanggal</th>
         <th style="min-width:70px">Center</th>
+        ${mode === "project" ? '<th class="nowrap">No PD</th>' : ""}
         <th style="width:100%">Keterangan</th><th class="nowrap" style="text-align:right">Uang Masuk</th>
         <th class="nowrap" style="text-align:right">Uang Keluar</th><th class="nowrap" style="text-align:right">Saldo</th>
       </tr></thead>
       <tbody>${bodyRows || `<tr><td colspan="${colCount}" class="empty">Belum ada catatan.</td></tr>`}</tbody>
       ${rows.length ? `<tfoot><tr>
-        <td colspan="4">Total</td>
+        <td colspan="${mode === "project" ? 5 : 4}">Total</td>
         <td class="nowrap" style="text-align:right;color:#2E6B4F">${rupiah(totals.masuk)}</td>
         <td class="nowrap" style="text-align:right;color:#9C3B34">${rupiah(totals.keluar)}</td>
         <td class="nowrap" style="text-align:right">${rupiah(totals.sisa)}</td>
@@ -857,7 +873,7 @@ export default function BukuKas() {
       <div class="mark">${escapeHtml(logoText)}</div>
       <p class="eyebrow">${escapeHtml(companyName || "Buku Kas")}</p>
       <h1>${escapeHtml(project?.name || "-")}</h1>
-      <p class="scope">Form Permintaan Dana</p>
+      <p class="scope">Form Permintaan Dana ${req.noPermintaan ? "— " + escapeHtml(formatNoPD(req.noPermintaan)) : ""}</p>
       <p class="meta">Tanggal: ${dateLabelID(req.tanggal)}</p>
     </header>
     <div class="infobar">
@@ -903,7 +919,8 @@ export default function BukuKas() {
     const a = document.createElement("a");
     a.href = url;
     const scopeName = (project?.name || "project").replace(/[^a-z0-9]+/gi, "-");
-    a.download = `Permintaan-Dana-${scopeName}-${req.tanggal}.html`;
+    const pdPart = req.noPermintaan ? `${formatNoPD(req.noPermintaan)}-` : "";
+    a.download = `Permintaan-Dana-${pdPart}${scopeName}-${req.tanggal}.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1136,7 +1153,7 @@ export default function BukuKas() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: T.paperDark, borderBottom: `2px solid ${T.brassDark}` }}>
-                      <Th style={{ width: 44 }}>No</Th>
+                      <Th style={{ width: 80 }}>No PD</Th>
                       <Th style={{ width: 100 }}>Tanggal</Th>
                       <Th>Project</Th>
                       <Th>Keperluan</Th>
@@ -1163,7 +1180,7 @@ export default function BukuKas() {
                         <tr key={r.id} style={{ borderBottom: `1px solid ${T.line}` }}
                           className="hover:bg-black/[0.02] cursor-pointer"
                           onClick={() => openEditRequest(r)}>
-                          <Td className="bk-mono">{i + 1}</Td>
+                          <Td className="bk-mono font-semibold" style={{ color: T.brassDark }}>{formatNoPD(r.noPermintaan)}</Td>
                           <Td className="bk-mono">{dateLabelID(r.tanggal)}</Td>
                           <Td>{project?.name || "-"}</Td>
                           <Td>{r.keterangan || "-"}</Td>
@@ -1197,7 +1214,7 @@ export default function BukuKas() {
                           <Td align="right">
                             <div className="flex items-center gap-1 justify-end" onClick={(e) => e.stopPropagation()}>
                               {!r.entryId && (
-                                <button onClick={() => convertRequestToExpense(r)} title="Catat sebagai pengeluaran di Uang Project"
+                                <button onClick={() => setConvertingRequest(r)} title="Catat sebagai pengeluaran di Uang Project"
                                   className="p-1.5 rounded hover:bg-black/5">
                                   <ArrowRightCircle size={14} style={{ color: T.brassDark }} />
                                 </button>
@@ -1243,6 +1260,7 @@ export default function BukuKas() {
                   <Th style={{ width: 44 }}>No</Th>
                   <Th style={{ width: 100 }}>Tanggal</Th>
                   <Th style={{ width: 120 }}>Center</Th>
+                  {mode === "project" && <Th style={{ width: 90 }}>No PD</Th>}
                   {mode === "project" && <Th>Project</Th>}
                   <Th>Keterangan</Th>
                   <Th align="right">Uang Masuk</Th>
@@ -1254,7 +1272,7 @@ export default function BukuKas() {
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="text-center py-10 text-sm" style={{ color: T.inkSoft }}>
+                    <td colSpan={9} className="text-center py-10 text-sm" style={{ color: T.inkSoft }}>
                       Belum ada catatan{mode === "bulanan" ? " di bulan ini." : " di project ini."}
                     </td>
                   </tr>
@@ -1266,6 +1284,9 @@ export default function BukuKas() {
                     <Td className="bk-mono">{r.no}</Td>
                     <Td className="bk-mono">{dateLabelID(r.tanggal)}</Td>
                     <Td style={{ color: T.inkSoft }}>{r.center || "—"}</Td>
+                    {mode === "project" && (
+                      <Td className="bk-mono" style={{ color: T.brassDark }}>{formatNoPD(r.noPermintaan) || "—"}</Td>
+                    )}
                     {mode === "project" && <Td>{projects.find((p) => p.id === r.projectId)?.name || "-"}</Td>}
                     <Td>{r.keterangan}</Td>
                     <Td align="right" className="bk-mono" style={{ color: T.masuk }}>
@@ -1290,7 +1311,7 @@ export default function BukuKas() {
               {rows.length > 0 && (
                 <tfoot>
                   <tr style={{ borderTop: `2px solid ${T.brassDark}`, background: T.paperDark }}>
-                    <Td colSpan={mode === "project" ? 5 : 4} className="font-semibold">Total</Td>
+                    <Td colSpan={mode === "project" ? 6 : 4} className="font-semibold">Total</Td>
                     <Td align="right" className="bk-mono font-bold" style={{ color: T.masuk }}>{rupiah(totals.masuk)}</Td>
                     <Td align="right" className="bk-mono font-bold" style={{ color: T.keluar }}>{rupiah(totals.keluar)}</Td>
                     <Td align="right" className="bk-mono font-bold">{rupiah(totals.sisa)}</Td>
@@ -1437,6 +1458,13 @@ export default function BukuKas() {
           defaultAmount={requestTotal(transferringRequest)}
           onClose={() => setTransferringRequest(null)}
           onSave={(tanggal, jumlah, catatan) => recordTransferReceived(transferringRequest, tanggal, jumlah, catatan)}
+        />
+      )}
+      {convertingRequest && (
+        <ConvertModal
+          request={convertingRequest}
+          onClose={() => setConvertingRequest(null)}
+          onSave={(tanggal) => convertRequestToExpense(convertingRequest, tanggal)}
         />
       )}
       {pendingImport && (
@@ -2080,6 +2108,31 @@ function TransferModal({ request, defaultAmount, onClose, onSave }) {
         className="w-full py-2 rounded-md text-sm font-medium disabled:opacity-40"
         style={{ background: T.brass, color: T.white }}>
         Simpan
+      </button>
+    </ModalShell>
+  );
+}
+
+function ConvertModal({ request, onClose, onSave }) {
+  const [tanggal, setTanggal] = useState(request.tanggal || todayISO());
+
+  return (
+    <ModalShell onClose={onClose} title="Catat sebagai Pengeluaran">
+      <p className="text-xs mb-4" style={{ color: T.inkSoft }}>
+        Setiap item di permintaan dana ini akan dicatat sebagai baris Uang Keluar
+        di buku kas project. Pilih tanggal pencatatannya — defaultnya tanggal
+        permintaan dibuat, tapi bisa diganti (mis. tanggal barang benar-benar dibeli).
+      </p>
+
+      <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Tanggal Pencatatan</label>
+      <input type="date" value={tanggal} onChange={(e) => setTanggal(e.target.value)}
+        className="w-full text-sm px-3 py-2 rounded-md mb-4" style={{ border: `1px solid ${T.line}` }} />
+
+      <button onClick={() => onSave(tanggal)}
+        disabled={!tanggal}
+        className="w-full py-2 rounded-md text-sm font-medium disabled:opacity-40"
+        style={{ background: T.brass, color: T.white }}>
+        Catat Sekarang
       </button>
     </ModalShell>
   );
