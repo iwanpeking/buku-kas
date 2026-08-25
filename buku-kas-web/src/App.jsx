@@ -467,9 +467,11 @@ export default function BukuKas() {
       setCurrentProjectId(row.id);
       setShowProjectModal(false);
       showToast(`Project "${name}" dibuat.`);
+      return newProj;
     } catch (err) {
       console.error(err);
       showToast("Gagal membuat project.", "error");
+      return null;
     }
   }
   async function renameProject(id, newName) {
@@ -1495,6 +1497,7 @@ export default function BukuKas() {
           defaultProjectId={requestProjectFilter || projects[0]?.id || ""}
           defaultPreparer={preparer}
           defaultChecker={checker}
+          onCreateProject={createProject}
           onClose={() => { setShowRequestModal(false); setEditingRequest(null); }}
           onSave={saveRequest}
         />
@@ -1847,7 +1850,7 @@ function EntryModal({ initial, existingCenters = [], apiKey, onClose, onSave }) 
   );
 }
 
-function RequestModal({ initial, projects, existingCenters = [], defaultProjectId, defaultPreparer = "", defaultChecker = "", onClose, onSave }) {
+function RequestModal({ initial, projects, existingCenters = [], defaultProjectId, defaultPreparer = "", defaultChecker = "", onCreateProject, onClose, onSave }) {
   const [projectId, setProjectId] = useState(initial?.projectId || defaultProjectId || "");
   const [tanggal, setTanggal] = useState(initial?.tanggal || todayISO());
   const [peminta, setPeminta] = useState(initial?.peminta || "");
@@ -1857,6 +1860,32 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
   const [items, setItems] = useState(
     initial?.items?.length ? initial.items.map((it) => ({ center: "", ...it })) : [{ id: uid(), center: "", nama: "", qty: "", harga: "" }]
   );
+  const [localExtraProjects, setLocalExtraProjects] = useState([]);
+  const [showNewProjectRow, setShowNewProjectRow] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+
+  const allProjects = useMemo(() => {
+    const merged = [...projects];
+    localExtraProjects.forEach((p) => { if (!merged.find((m) => m.id === p.id)) merged.push(p); });
+    return merged;
+  }, [projects, localExtraProjects]);
+
+  async function handleCreateProjectInline() {
+    if (!newProjectName.trim() || !onCreateProject) return;
+    setCreatingProject(true);
+    try {
+      const newProj = await onCreateProject(newProjectName.trim());
+      if (newProj) {
+        setLocalExtraProjects((prev) => [...prev, newProj]);
+        setProjectId(newProj.id);
+        setNewProjectName("");
+        setShowNewProjectRow(false);
+      }
+    } finally {
+      setCreatingProject(false);
+    }
+  }
 
   function updateItem(id, field, value) {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
@@ -1900,14 +1929,37 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
           <button onClick={onClose} className="p-1 rounded hover:bg-black/5"><X size={18} /></button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
           <div>
             <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Project</label>
             <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
               className="w-full text-sm px-3 py-2 rounded-md" style={{ border: `1px solid ${T.line}` }}>
               <option value="">Pilih project...</option>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {allProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
+            {!showNewProjectRow ? (
+              <button type="button" onClick={() => setShowNewProjectRow(true)}
+                className="text-xs font-medium underline mt-1" style={{ color: T.brassDark }}>
+                + Project Baru
+              </button>
+            ) : (
+              <div className="flex gap-1.5 mt-1.5">
+                <input autoFocus value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder="Nama project baru"
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleCreateProjectInline(); } }}
+                  className="flex-1 text-sm px-2 py-1.5 rounded-md" style={{ border: `1px solid ${T.line}` }} />
+                <button type="button" onClick={handleCreateProjectInline}
+                  disabled={creatingProject || !newProjectName.trim()}
+                  className="text-xs font-medium px-3 py-1.5 rounded-md disabled:opacity-40"
+                  style={{ background: T.brass, color: T.white }}>
+                  Buat
+                </button>
+                <button type="button" onClick={() => { setShowNewProjectRow(false); setNewProjectName(""); }}
+                  className="text-xs font-medium px-2 py-1.5 rounded-md" style={{ border: `1px solid ${T.line}` }}>
+                  Batal
+                </button>
+              </div>
+            )}
           </div>
           <div>
             <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Tanggal</label>
