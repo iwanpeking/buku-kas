@@ -430,10 +430,12 @@ export default function BukuKas() {
     setShowEntryModal(true);
   }
   async function saveEntry(data) {
+    let savedId;
     if (editingEntry) {
       const next = entries.map((e) => (e.id === editingEntry.id ? { ...e, ...data } : e));
       await persistEntries(next);
       showToast("Catatan diperbarui.");
+      savedId = editingEntry.id;
     } else {
       const newEntry = {
         id: uid(),
@@ -445,9 +447,14 @@ export default function BukuKas() {
       };
       await persistEntries([...entries, newEntry]);
       showToast("Catatan ditambahkan.");
+      savedId = newEntry.id;
     }
     setShowEntryModal(false);
     setEditingEntry(null);
+    // scroll ke baris yang baru saja disimpan supaya langsung terlihat
+    setTimeout(() => {
+      document.querySelector(`[data-entry-id="${savedId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 150);
   }
   async function deleteEntry(id) {
     await persistEntries(entries.filter((e) => e.id !== id));
@@ -1280,7 +1287,7 @@ export default function BukuKas() {
                   </tr>
                 )}
                 {rows.map((r) => (
-                  <tr key={r.id} style={{ borderBottom: `1px solid ${T.line}` }}
+                  <tr key={r.id} data-entry-id={r.id} style={{ borderBottom: `1px solid ${T.line}` }}
                     className="hover:bg-black/[0.02] cursor-pointer"
                     onClick={() => openEditEntry(r)}>
                     <Td className="bk-mono">{r.no}</Td>
@@ -1374,6 +1381,27 @@ export default function BukuKas() {
         )}
       </div>
 
+
+      {ready && (mode === "bulanan" || (mode === "project" && !locked && currentProjectId)) && (
+        <button
+          onClick={openNewEntry}
+          title="Tambah Catatan"
+          className="no-print fixed bottom-24 right-5 sm:right-8 w-14 h-14 rounded-full flex items-center justify-center shadow-lg z-40"
+          style={{ background: T.brass, color: T.white }}
+        >
+          <Plus size={26} />
+        </button>
+      )}
+      {ready && mode === "permintaan" && projects.length > 0 && (
+        <button
+          onClick={openNewRequest}
+          title="Buat Permintaan Dana"
+          className="no-print fixed bottom-24 right-5 sm:right-8 w-14 h-14 rounded-full flex items-center justify-center shadow-lg z-40"
+          style={{ background: T.brass, color: T.white }}
+        >
+          <Plus size={26} />
+        </button>
+      )}
 
       {toast && (
         <div className="no-print fixed bottom-4 right-4 px-4 py-2.5 rounded-md text-sm shadow-lg flex items-center gap-2"
