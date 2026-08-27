@@ -1,62 +1,76 @@
-# Cara Menaruh "Buku Kas" Online dengan Login Bersama (Gratis)
+# Cara Menaruh "Buku Kas" Online (Gratis)
 
-Tidak perlu install apa pun di laptop. Semua dilakukan lewat browser.
-Sekarang aplikasi ini butuh **login**, dan semua orang yang login akan
-melihat **data yang sama** (tersimpan di database pusat, bukan lagi di
-browser masing-masing).
+## ⚠️ Kalau ini update dari versi sebelumnya
+Struktur database berubah total: sekarang **semua data privat per akun**,
+kecuali sebuah project sengaja "dibagikan" lewat undangan email.
 
-## Langkah 1 — Buat database di Supabase (gratis)
+1. Klik **"Cadangkan Data"** dulu di aplikasi versi lama Anda (untuk jaga-jaga).
+2. Buka Supabase project Anda → **SQL Editor** → **New Query**.
+3. Copy-paste **seluruh isi file `schema.sql`** yang baru ini → klik **Run**.
+   (Ini akan menghapus tabel lama dan membuat ulang dengan struktur baru —
+   data lama di tabel lama akan hilang, makanya backup dulu di langkah 1.)
+4. Update file `src/App.jsx`, `src/main.jsx` di GitHub dengan isi yang baru
+   (lihat "Update aplikasi" di bagian bawah panduan ini).
+5. Setelah live, gunakan tombol **"Pulihkan"** di aplikasi untuk memuat
+   kembali cadangan dari langkah 1 (Uang Bulanan akan tergabung; project-project
+   dari cadangan akan dibuat ulang sebagai project baru milik Anda).
+
+## Setup dari nol (belum pernah deploy sama sekali)
+
+### Langkah 1 — Buat database di Supabase (gratis)
 1. Buka https://supabase.com → **"Start your project"** → daftar/login.
-2. Klik **"New Project"**. Isi nama project (bebas), buat password database
-   (simpan baik-baik, jarang dipakai lagi), pilih region terdekat (Singapore).
-   Klik **"Create new project"**. Tunggu ± 2 menit sampai siap.
-3. Di menu sebelah kiri klik **"SQL Editor"** → **"New query"**.
-4. Buka file **`schema.sql`** yang ada di folder ini, salin semua isinya,
-   tempel ke SQL Editor tadi, lalu klik **"Run"**. Ini membuat tabel
-   penyimpanan datanya.
-5. Di menu sebelah kiri klik ikon gerigi **"Project Settings" → "API"**.
-   Catat dua hal ini:
-   - **Project URL** (mis. `https://xxxxx.supabase.co`)
-   - **anon public key** (deretan huruf/angka panjang)
+2. **"New Project"** → isi nama, buat password database, pilih region
+   terdekat (Singapore) → **"Create new project"**. Tunggu ± 2 menit.
+3. Menu kiri → **"SQL Editor"** → **"New query"**.
+4. Copy-paste **seluruh isi file `schema.sql`** → klik **"Run"**.
+5. Menu kiri → ikon gerigi **"Project Settings" → "API Keys"**.
+   Catat:
+   - **Project URL** (klik "Data API" di menu kiri untuk melihatnya, mis. `https://xxxxx.supabase.co`)
+   - **anon public key** / **Publishable key** (deretan huruf-angka panjang)
+6. **Matikan pendaftaran umum** (supaya orang tidak bisa daftar sembarangan):
+   **Authentication → Sign In / Providers → Email → matikan "Allow new users to sign up"**.
 
-## Langkah 2 — Buat akun GitHub (kalau belum punya)
-1. Buka https://github.com/signup dan daftar.
+### Langkah 2 — Buat akun GitHub (kalau belum punya)
+Buka https://github.com/signup dan daftar.
 
-## Langkah 3 — Upload folder ini ke GitHub
-1. Login GitHub → klik **"+"** di kanan atas → **"New repository"**.
-2. Isi nama, misal `buku-kas`. Biarkan **Public**. Klik **"Create repository"**.
+### Langkah 3 — Upload folder ini ke GitHub
+1. Login GitHub → **"+"** di kanan atas → **"New repository"**.
+2. Isi nama, misal `buku-kas`. **Public**. **"Create repository"**.
 3. Klik **"uploading an existing file"**.
 4. Buka folder proyek ini, pilih **SEMUA isi di dalamnya** (`src`, `index.html`,
    `package.json`, `schema.sql`, dll — bukan folder pembungkusnya), drag ke
-   halaman GitHub tersebut, lalu klik **"Commit changes"**.
+   halaman GitHub, lalu **"Commit changes"**.
 
-## Langkah 4 — Deploy ke Vercel + pasang kunci Supabase
-1. Buka https://vercel.com/signup → **"Continue with GitHub"**.
-2. **"Add New..." → "Project"** → pilih repository `buku-kas` → **"Import"**.
-3. **Sebelum klik Deploy**, buka bagian **"Environment Variables"**, tambahkan dua baris:
-   - Name: `VITE_SUPABASE_URL` — Value: *(Project URL dari Langkah 1)*
-   - Name: `VITE_SUPABASE_ANON_KEY` — Value: *(anon public key dari Langkah 1)*
-4. Klik **"Deploy"**. Tunggu 1–2 menit.
-5. Selesai! Anda dapat alamat website seperti `https://buku-kas-xxxx.vercel.app`.
+### Langkah 4 — Deploy ke Vercel + pasang kunci Supabase
+1. https://vercel.com/signup → **"Continue with GitHub"** → izinkan akses,
+   pilih repository `buku-kas` saat diminta.
+2. **"Add New..." → "Project"** → pilih `buku-kas` → **"Import"**.
+3. **Framework Preset**: pastikan terpilih **"Vite"** (bukan "Other").
+4. Buka **"Environment Variables"**, tambahkan (Key lalu Value, dua baris):
+   - `VITE_SUPABASE_URL` → Project URL dari Langkah 1
+   - `VITE_SUPABASE_ANON_KEY` → anon/publishable key dari Langkah 1
+5. Klik **"Deploy"**. Tunggu 1–2 menit → dapat alamat website sendiri.
 
-## Menambah pengguna baru
-Buka websitenya, klik tab **"Daftar"**, isi email + password. Selesai —
-begitu login, orang itu langsung melihat data yang sama dengan Anda.
+### Langkah 5 — Buat akun pertama Anda
+Karena pendaftaran umum dimatikan, buat akun pertama secara manual:
+**Supabase → Authentication → Users → Add user → Create new user**,
+isi email + password, centang **"Auto Confirm User"** → **"Create user"**.
 
-> **Verifikasi email:** secara default Supabase mewajibkan konfirmasi email
-> saat mendaftar. Untuk tim kecil yang ingin langsung pakai tanpa ribet,
-> Anda bisa matikan ini di Supabase: **Authentication → Providers → Email
-> → matikan "Confirm email"**.
+## Cara pakai setelah online
 
-## Setelah online
-- **Tombol Cetak Laporan** langsung berfungsi normal (tanpa unduh-buka lagi).
-- **Data kini tersinkron** — siapa pun yang login (dari device manapun) melihat
-  data yang sama dan saling memperbarui.
-- **Fitur baca nota otomatis (OCR)** tetap butuh Anthropic API Key milik Anda
-  sendiri, diisi di menu Pengaturan aplikasi (bukan di Supabase/Vercel).
-- Tombol **"Cadangkan Data"** tetap berguna sebagai backup tambahan.
+- **Uang Bulanan** — otomatis privat, cuma Anda yang lihat.
+- **Uang Project** — saat bikin project baru, otomatis PRIVAT dulu (cuma
+  Anda). Untuk mengajak orang lain kerja bareng di project itu, klik
+  **"Kelola Anggota"** (cuma muncul untuk pemilik project) → masukkan
+  email orang tersebut. Begitu diundang, dia langsung bisa lihat & edit
+  project itu penuh (harus sudah punya akun — tambahkan dulu lewat
+  Supabase seperti di Langkah 5 kalau orangnya belum punya akun).
+- **Menambah user baru**: selalu lewat Supabase (Authentication → Users →
+  Add user), bukan lewat halaman pendaftaran di web (memang sengaja dimatikan).
+- **Fitur OCR nota**: tetap butuh Anthropic API Key milik masing-masing
+  orang, diisi sendiri-sendiri di menu Pengaturan (privat, tidak dibagikan).
 
 ## Update aplikasi di kemudian hari
-Kalau nanti ada perbaikan/fitur baru, tinggal upload ulang file yang berubah
-ke repository GitHub yang sama — Vercel otomatis build ulang dan website
-ter-update sendiri.
+Kalau ada perbaikan/fitur baru, upload ulang file yang berubah ke
+repository GitHub yang sama (folder `src` → klik file → ikon pensil →
+timpa isinya → Commit changes). Vercel otomatis build ulang.
