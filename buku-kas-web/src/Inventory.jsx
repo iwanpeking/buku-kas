@@ -500,7 +500,7 @@ export function LaporanInventaris({ items }) {
             <table className="w-full text-xs" style={{ borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: T.ink, color: T.white }}>
-                  {["Nama PC", "Processor", "RAM", "Storage", "Windows", "Umur", "Status"].map((h) => (
+                  {["Nama PC", "Processor", "RAM", "Storage", "Windows", "Windows Diinstal", "Umur", "Status"].map((h) => (
                     <th key={h} className="text-left px-2 py-1.5 font-medium">{h}</th>
                   ))}
                 </tr>
@@ -513,6 +513,7 @@ export function LaporanInventaris({ items }) {
                     <td className="px-2 py-1.5">{x.item.ram_gb ? x.item.ram_gb + " GB" : "-"}</td>
                     <td className="px-2 py-1.5">{x.item.storage_info || "-"}</td>
                     <td className="px-2 py-1.5">{x.item.os || "-"}</td>
+                    <td className="px-2 py-1.5">{x.item.win_install_date || "-"}</td>
                     <td className="px-2 py-1.5">{x.age === null ? "-" : x.age + " th"}</td>
                     <td className="px-2 py-1.5"><Badge status={x.status} /></td>
                   </tr>
@@ -524,9 +525,10 @@ export function LaporanInventaris({ items }) {
       })}
 
       <div className="text-xs mt-4" style={{ color: T.inkSoft }}>
-        Umur dihitung dari tanggal BIOS (bila diisi) sebagai indikator utama, karena tanggal install Windows dapat berubah
-        bila sistem pernah di-install ulang. Standar kantor: &lt;5 th normal · 5 th rencana penggantian · 6–7 th prioritas
-        evaluasi · &gt;7 th melewati standar.
+        Umur dihitung dari tanggal BIOS (bila diisi) sebagai indikator utama. Kolom "Windows Diinstal" ditampilkan sebagai
+        info tambahan saja — tidak dipakai untuk menghitung status umur, karena tanggalnya bisa berubah bila sistem pernah
+        di-install ulang. Standar kantor: &lt;5 th normal · 5 th rencana penggantian · 6–7 th prioritas evaluasi ·
+        &gt;7 th melewati standar.
       </div>
     </div>
   );
