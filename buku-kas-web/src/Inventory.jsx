@@ -500,7 +500,7 @@ export function LaporanInventaris({ items }) {
             <table className="w-full text-xs" style={{ borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: T.ink, color: T.white }}>
-                  {["Nama PC", "Processor", "RAM", "Storage", "Windows", "Windows Diinstal", "Umur", "Status"].map((h) => (
+                  {["Nama PC", "Processor", "RAM", "Storage", "Windows", "Tgl BIOS", "Windows Diinstal", "Umur", "Status"].map((h) => (
                     <th key={h} className="text-left px-2 py-1.5 font-medium">{h}</th>
                   ))}
                 </tr>
@@ -513,6 +513,7 @@ export function LaporanInventaris({ items }) {
                     <td className="px-2 py-1.5">{x.item.ram_gb ? x.item.ram_gb + " GB" : "-"}</td>
                     <td className="px-2 py-1.5">{x.item.storage_info || "-"}</td>
                     <td className="px-2 py-1.5">{x.item.os || "-"}</td>
+                    <td className="px-2 py-1.5">{x.item.bios_date || "-"}</td>
                     <td className="px-2 py-1.5">{x.item.win_install_date || "-"}</td>
                     <td className="px-2 py-1.5">{x.age === null ? "-" : x.age + " th"}</td>
                     <td className="px-2 py-1.5"><Badge status={x.status} /></td>
