@@ -281,9 +281,15 @@ export default function BukuKas() {
   }, [projects]);
 
   /* ---------- inventaris komputer CRUD ---------- */
+  const INV_DATE_FIELDS = ["tanggal_beli", "bios_date"];
+  function normalizeInvDates(obj) {
+    const out = { ...obj };
+    INV_DATE_FIELDS.forEach((k) => { if (out[k] === "") out[k] = null; });
+    return out;
+  }
   async function addInventoryItem(data, opts = {}) {
     try {
-      const payload = { ...data };
+      const payload = normalizeInvDates(data);
       if (opts.txEntryId) payload.tx_entry_id = opts.txEntryId;
       if (opts.txProjectId) payload.tx_project_id = opts.txProjectId;
       const { data: row, error } = await supabase
@@ -302,12 +308,13 @@ export default function BukuKas() {
   }
   async function updateInventoryItem(id, patch) {
     try {
+      const cleanPatch = normalizeInvDates(patch);
       const { error } = await supabase
         .from("inventory_items")
-        .update({ ...patch, updated_at: new Date().toISOString() })
+        .update({ ...cleanPatch, updated_at: new Date().toISOString() })
         .eq("id", id);
       if (error) throw error;
-      setInventoryItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+      setInventoryItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...cleanPatch } : i)));
       showToast("Unit inventaris diperbarui.");
     } catch (err) {
       console.error(err);
