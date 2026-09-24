@@ -40,7 +40,7 @@ const dateLabelID = (iso) => {
 };
 
 export function computeAge(item) {
-  const baseStr = item.bios_date || item.tanggal_beli;
+  const baseStr = item.tanggal_beli || item.bios_date;
   if (!baseStr) return null;
   const base = new Date(baseStr + (baseStr.length === 10 ? "T00:00:00" : ""));
   if (isNaN(base)) return null;
@@ -586,7 +586,8 @@ export function LaporanInventaris({ items }) {
       })}
 
       <div className="text-xs mt-4" style={{ color: T.inkSoft }}>
-        Umur dihitung dari tanggal BIOS (bila diisi) sebagai indikator utama. Kolom "Windows Diinstal" ditampilkan sebagai
+        Umur dihitung dari tanggal beli (bila diisi) sebagai indikator utama, dengan tanggal BIOS sebagai cadangan kalau
+        tanggal beli belum diisi. Kolom "Windows Diinstal" ditampilkan sebagai
         info tambahan saja — tidak dipakai untuk menghitung status umur, karena tanggalnya bisa berubah bila sistem pernah
         di-install ulang. Standar kantor: &lt;5 th normal · 5 th rencana penggantian · 6–7 th prioritas evaluasi ·
         &gt;7 th melewati standar.
