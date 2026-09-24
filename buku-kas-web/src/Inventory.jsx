@@ -103,7 +103,15 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
   const [editing, setEditing] = useState(null);
   const [statusFilter, setStatusFilter] = useState("semua");
   const [cabangFilter, setCabangFilter] = useState("semua");
+  const [viewMode, setViewMode] = useState(() => {
+    try { return localStorage.getItem("bk_inventory_view") || "grid"; } catch (e) { return "grid"; }
+  });
   const fileRef = useRef(null);
+
+  function changeView(v) {
+    setViewMode(v);
+    try { localStorage.setItem("bk_inventory_view", v); } catch (e) {}
+  }
 
   const cabangList = useMemo(() => {
     const set = new Set(items.map((i) => (i.cabang || "").trim()).filter(Boolean));
@@ -151,35 +159,49 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
 
   return (
     <div>
-      <div className="no-print flex flex-wrap items-center justify-between gap-3 mb-4">
-        <h2 className="bk-display text-lg font-semibold" style={{ color: T.ink }}>Unit Inventaris</h2>
-        <div className="flex gap-2">
-          <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleCsvFile} />
-          <button onClick={() => fileRef.current?.click()}
-            className="flex items-center gap-1 text-xs px-3 py-2 rounded-md font-medium"
-            style={{ border: `1px solid ${T.line}`, color: T.inkSoft, background: T.white }}>
-            <Upload size={13} /> Import CSV
-          </button>
-          <button onClick={() => setShowAdd(true)}
-            className="flex items-center gap-1 text-sm px-3 py-2 rounded-md font-medium"
-            style={{ background: T.brass, color: T.white }}>
-            <Plus size={14} /> Tambah Unit
-          </button>
+      <div className="no-print sticky top-0 z-10 -mx-4 px-4 sm:-mx-8 sm:px-8 pb-3 pt-1"
+        style={{ background: T.paper, borderBottom: `1px solid ${T.line}` }}>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3 pt-2">
+          <h2 className="bk-display text-lg font-semibold" style={{ color: T.ink }}>Unit Inventaris</h2>
+          <div className="flex gap-2 flex-wrap">
+            <div className="flex rounded-md overflow-hidden" style={{ border: `1px solid ${T.line}` }}>
+              <button onClick={() => changeView("grid")}
+                className="text-xs px-3 py-2 font-medium"
+                style={{ background: viewMode === "grid" ? T.brass : T.white, color: viewMode === "grid" ? T.white : T.inkSoft }}>
+                ▦ Kotak
+              </button>
+              <button onClick={() => changeView("list")}
+                className="text-xs px-3 py-2 font-medium"
+                style={{ background: viewMode === "list" ? T.brass : T.white, color: viewMode === "list" ? T.white : T.inkSoft, borderLeft: `1px solid ${T.line}` }}>
+                ☰ List
+              </button>
+            </div>
+            <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleCsvFile} />
+            <button onClick={() => fileRef.current?.click()}
+              className="flex items-center gap-1 text-xs px-3 py-2 rounded-md font-medium"
+              style={{ border: `1px solid ${T.line}`, color: T.inkSoft, background: T.white }}>
+              <Upload size={13} /> Import CSV
+            </button>
+            <button onClick={() => setShowAdd(true)}
+              className="flex items-center gap-1 text-sm px-3 py-2 rounded-md font-medium"
+              style={{ background: T.brass, color: T.white }}>
+              <Plus size={14} /> Tambah Unit
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div className="no-print flex flex-wrap gap-2 mb-2">
-        {[
-          { k: "semua", l: "Semua status" },
-          { k: "normal", l: "Normal" },
-          { k: "rencana", l: "Rencana Penggantian" },
-          { k: "evaluasi", l: "Prioritas Evaluasi" },
-          { k: "ganti", l: "Melewati Standar" },
-        ].map((o) => (
-          <button key={o.k} onClick={() => setStatusFilter(o.k)}
-            className="text-xs px-3 py-1.5 rounded-full font-medium"
-            style={{
-              background: statusFilter === o.k ? T.ink : T.white,
+        <div className="flex flex-wrap gap-2 mb-2">
+          {[
+            { k: "semua", l: "Semua status" },
+            { k: "normal", l: "Normal" },
+            { k: "rencana", l: "Rencana Penggantian" },
+            { k: "evaluasi", l: "Prioritas Evaluasi" },
+            { k: "ganti", l: "Melewati Standar" },
+          ].map((o) => (
+            <button key={o.k} onClick={() => setStatusFilter(o.k)}
+              className="text-xs px-3 py-1.5 rounded-full font-medium"
+              style={{
+                background: statusFilter === o.k ? T.ink : T.white,
               color: statusFilter === o.k ? T.white : T.inkSoft,
               border: `1px solid ${statusFilter === o.k ? T.ink : T.line}`,
             }}>
@@ -208,6 +230,7 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
             {c}
           </button>
         ))}
+        </div>
       </div>
 
       {groups.length === 0 && (
@@ -221,33 +244,70 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
           <h3 className="text-sm font-semibold mb-2 pb-1.5" style={{ color: T.ink, borderBottom: `1px solid ${T.line}` }}>
             {g.cabang} <span className="font-normal bk-mono text-xs" style={{ color: T.inkSoft }}>({g.items.length} unit)</span>
           </h3>
-          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))" }}>
-            {g.items.map((item) => {
-              const age = computeAge(item);
-              const s = statusFromAge(age);
-              const badgeStatus = item.status_pakai !== "Aktif"
-                ? { bg: T.line, fg: T.inkSoft, label: item.status_pakai }
-                : s;
-              return (
-                <button key={item.id} onClick={() => setEditing(item)} type="button" className="text-left p-4 rounded-lg"
-                  style={{ background: T.white, border: `1px solid ${T.line}` }}>
-                  <div className="text-xs mb-1" style={{ color: T.inkSoft }}>
-                    {item.kategori}{item.nama_pc ? ` · ${item.nama_pc}` : ""}
-                  </div>
-                  <div className="bk-display font-semibold text-base mb-1" style={{ color: T.ink }}>
-                    {item.merk}{item.model ? ` ${item.model}` : ""}
-                  </div>
-                  <div className="text-xs bk-mono mb-2" style={{ color: T.inkSoft }}>
-                    {item.penempatan || "belum ada detail lokasi"}
-                  </div>
-                  <Badge status={badgeStatus} />
-                  <div className="text-xs mt-2" style={{ color: T.inkSoft }}>
-                    {age === null ? "Umur belum diketahui" : `~${age} tahun`}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+
+          {viewMode === "list" ? (
+            <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: T.ink, color: T.white }}>
+                  {["Unit", "Kategori", "Lokasi", "Umur", "Status"].map((h) => (
+                    <th key={h} className="text-left px-2.5 py-1.5 text-xs font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {g.items.map((item) => {
+                  const age = computeAge(item);
+                  const s = statusFromAge(age);
+                  const badgeStatus = item.status_pakai !== "Aktif"
+                    ? { bg: T.line, fg: T.inkSoft, label: item.status_pakai }
+                    : s;
+                  return (
+                    <tr key={item.id} onClick={() => setEditing(item)} className="cursor-pointer"
+                      style={{ borderBottom: `1px solid ${T.line}` }}>
+                      <td className="px-2.5 py-2">
+                        <div className="font-semibold bk-display" style={{ color: T.ink }}>
+                          {item.merk}{item.model ? ` ${item.model}` : ""}
+                        </div>
+                        {item.nama_pc && <div className="text-xs bk-mono" style={{ color: T.inkSoft }}>{item.nama_pc}</div>}
+                      </td>
+                      <td className="px-2.5 py-2">{item.kategori}</td>
+                      <td className="px-2.5 py-2">{item.penempatan || "-"}</td>
+                      <td className="px-2.5 py-2 bk-mono">{age === null ? "-" : `~${age} th`}</td>
+                      <td className="px-2.5 py-2"><Badge status={badgeStatus} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))" }}>
+              {g.items.map((item) => {
+                const age = computeAge(item);
+                const s = statusFromAge(age);
+                const badgeStatus = item.status_pakai !== "Aktif"
+                  ? { bg: T.line, fg: T.inkSoft, label: item.status_pakai }
+                  : s;
+                return (
+                  <button key={item.id} onClick={() => setEditing(item)} type="button" className="text-left p-4 rounded-lg"
+                    style={{ background: T.white, border: `1px solid ${T.line}` }}>
+                    <div className="text-xs mb-1" style={{ color: T.inkSoft }}>
+                      {item.kategori}{item.nama_pc ? ` · ${item.nama_pc}` : ""}
+                    </div>
+                    <div className="bk-display font-semibold text-base mb-1" style={{ color: T.ink }}>
+                      {item.merk}{item.model ? ` ${item.model}` : ""}
+                    </div>
+                    <div className="text-xs bk-mono mb-2" style={{ color: T.inkSoft }}>
+                      {item.penempatan || "belum ada detail lokasi"}
+                    </div>
+                    <Badge status={badgeStatus} />
+                    <div className="text-xs mt-2" style={{ color: T.inkSoft }}>
+                      {age === null ? "Umur belum diketahui" : `~${age} tahun`}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       ))}
 
