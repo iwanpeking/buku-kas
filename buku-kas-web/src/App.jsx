@@ -950,11 +950,11 @@ export default function BukuKas() {
     </table>
     <div class="sig">
       <div class="col">
-        <div class="name">${escapeHtml(preparer) || "\u00A0"}</div>
+        <div class="name">${escapeHtml(req.diajukanOleh || preparer) || "\u00A0"}</div>
         <div class="lbl">DIAJUKAN OLEH</div>
       </div>
       <div class="col">
-        <div class="name">${escapeHtml(checker) || "\u00A0"}</div>
+        <div class="name">${escapeHtml(req.disetujuiOleh || checker) || "\u00A0"}</div>
         <div class="lbl">DISETUJUI OLEH</div>
       </div>
     </div>
@@ -1525,6 +1525,8 @@ export default function BukuKas() {
           projects={projects}
           existingCenters={uniqueCenters}
           defaultProjectId={requestProjectFilter || projects[0]?.id || ""}
+          defaultDiajukanOleh={preparer}
+          defaultDisetujuiOleh={checker}
           onClose={() => { setShowRequestModal(false); setEditingRequest(null); }}
           onSave={saveRequest}
         />
@@ -1932,11 +1934,13 @@ function EntryModal({ initial, existingCenters = [], apiKey, onClose, onSave }) 
   );
 }
 
-function RequestModal({ initial, projects, existingCenters = [], defaultProjectId, onClose, onSave }) {
+function RequestModal({ initial, projects, existingCenters = [], defaultProjectId, defaultDiajukanOleh = "", defaultDisetujuiOleh = "", onClose, onSave }) {
   const [projectId, setProjectId] = useState(initial?.projectId || defaultProjectId || "");
   const [tanggal, setTanggal] = useState(initial?.tanggal || todayISO());
   const [peminta, setPeminta] = useState(initial?.peminta || "");
   const [keterangan, setKeterangan] = useState(initial?.keterangan || "");
+  const [diajukanOleh, setDiajukanOleh] = useState(initial?.diajukanOleh ?? defaultDiajukanOleh);
+  const [disetujuiOleh, setDisetujuiOleh] = useState(initial?.disetujuiOleh ?? defaultDisetujuiOleh);
   const [items, setItems] = useState(
     initial?.items?.length ? initial.items.map((it) => ({ center: "", ...it })) : [{ id: uid(), center: "", nama: "", qty: "", harga: "" }]
   );
@@ -1962,6 +1966,8 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
       tanggal,
       peminta: peminta.trim(),
       keterangan: keterangan.trim(),
+      diajukanOleh: diajukanOleh.trim(),
+      disetujuiOleh: disetujuiOleh.trim(),
       items: items
         .filter((it) => it.nama.trim())
         .map((it) => ({ id: it.id, center: (it.center || "").trim(), nama: it.nama.trim(), qty: Number(it.qty) || 0, harga: Number(it.harga) || 0 })),
@@ -2005,6 +2011,16 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
             <input value={keterangan} onChange={(e) => setKeterangan(e.target.value)}
               placeholder="mis. Belanja material minggu ke-3" className="w-full text-sm px-3 py-2 rounded-md"
               style={{ border: `1px solid ${T.line}` }} />
+          </div>
+          <div>
+            <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Diajukan oleh</label>
+            <input value={diajukanOleh} onChange={(e) => setDiajukanOleh(e.target.value)}
+              placeholder="Nama" className="w-full text-sm px-3 py-2 rounded-md" style={{ border: `1px solid ${T.line}` }} />
+          </div>
+          <div>
+            <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Disetujui oleh</label>
+            <input value={disetujuiOleh} onChange={(e) => setDisetujuiOleh(e.target.value)}
+              placeholder="Nama" className="w-full text-sm px-3 py-2 rounded-md" style={{ border: `1px solid ${T.line}` }} />
           </div>
         </div>
 
