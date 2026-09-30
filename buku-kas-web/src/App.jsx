@@ -674,9 +674,19 @@ export default function BukuKas() {
   }
   async function saveRequest(data) {
     if (editingRequest) {
-      const next = requests.map((r) => (r.id === editingRequest.id ? { ...r, ...data } : r));
+      let extra = {};
+      if (!editingRequest.noPermintaan) {
+        // Permintaan lama yang belum sempat dapat nomor (mis. dibuat waktu
+        // ada gangguan) — nomori sekarang, sesuai urutan periode tanggalnya.
+        const period = periodCodeMMYY(data.tanggal || editingRequest.tanggal);
+        const seqSamePeriod = requests.filter(
+          (r) => r.id !== editingRequest.id && (r.noPermintaan || "").includes(`-${period}-`)
+        ).length;
+        extra.noPermintaan = `PD-${period}-${String(seqSamePeriod + 1).padStart(3, "0")}`;
+      }
+      const next = requests.map((r) => (r.id === editingRequest.id ? { ...r, ...data, ...extra } : r));
       await persistRequests(next);
-      showToast("Permintaan dana diperbarui.");
+      showToast(extra.noPermintaan ? `Permintaan dana diperbarui, dinomori ${extra.noPermintaan}.` : "Permintaan dana diperbarui.");
     } else {
       const period = periodCodeMMYY(data.tanggal);
       const seqSamePeriod = requests.filter((r) => (r.noPermintaan || "").includes(`-${period}-`)).length;
