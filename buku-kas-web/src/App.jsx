@@ -60,6 +60,13 @@ const FONTS = `
 const rupiah = (n) =>
   "Rp " + Math.round(Number(n) || 0).toLocaleString("id-ID");
 
+const formatNoPD = (code) => code || "";
+// "0826" untuk Agustus 2026 (bulan-tahun 2 digit), dipakai sebagai bagian nomor permintaan dana
+const periodCodeMMYY = (tanggalISO) => {
+  const [y, m] = (tanggalISO || todayISO()).split("-");
+  return m + y.slice(2);
+};
+
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
@@ -135,6 +142,8 @@ export default function BukuKas() {
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [projectMembers, setProjectMembers] = useState([]);
   const [membersBusy, setMembersBusy] = useState(false);
+  const [transferringRequest, setTransferringRequest] = useState(null);
+  const [convertingRequest, setConvertingRequest] = useState(null);
 
   /* ---------- load persisted data ---------- */
   useEffect(() => {
@@ -157,7 +166,7 @@ export default function BukuKas() {
         if (projErr) throw projErr;
 
         // Inventaris komputer — tabel terpisah dari projects, tidak
-        // memengaruhi data Uang Bulanan / Uang Project yang sudah ada.
+        // memengaruhi data Uang Bulanan / Uang Project / Permintaan Dana.
         const { data: invRows, error: invErr } = await supabase
           .from("inventory_items")
           .select("*, inventory_maintenance(*)")
@@ -506,10 +515,12 @@ export default function BukuKas() {
   }
   async function saveEntry(data) {
     const { _inventaris, ...entryData } = data;
+    let savedId;
     if (editingEntry) {
       const next = entries.map((e) => (e.id === editingEntry.id ? { ...e, ...entryData } : e));
       await persistEntries(next);
       showToast("Catatan diperbarui.");
+      savedId = editingEntry.id;
     } else {
       const newEntry = {
         id: uid(),
@@ -527,9 +538,14 @@ export default function BukuKas() {
         });
       }
       showToast("Catatan ditambahkan.");
+      savedId = newEntry.id;
     }
     setShowEntryModal(false);
     setEditingEntry(null);
+    // scroll ke baris yang baru saja disimpan supaya langsung terlihat
+    setTimeout(() => {
+      document.querySelector(`[data-entry-id="${savedId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 150);
   }
   async function deleteEntry(id) {
     await persistEntries(entries.filter((e) => e.id !== id));
@@ -549,9 +565,11 @@ export default function BukuKas() {
       setCurrentProjectId(row.id);
       setShowProjectModal(false);
       showToast(`Project "${name}" dibuat.`);
+      return newProj;
     } catch (err) {
       console.error(err);
       showToast("Gagal membuat project.", "error");
+      return null;
     }
   }
   async function renameProject(id, newName) {
@@ -660,9 +678,12 @@ export default function BukuKas() {
       await persistRequests(next);
       showToast("Permintaan dana diperbarui.");
     } else {
-      const newReq = { id: uid(), createdAt: Date.now(), entryId: null, ...data };
+      const period = periodCodeMMYY(data.tanggal);
+      const seqSamePeriod = requests.filter((r) => (r.noPermintaan || "").includes(`-${period}-`)).length;
+      const noPermintaan = `PD-${period}-${String(seqSamePeriod + 1).padStart(3, "0")}`;
+      const newReq = { id: uid(), createdAt: Date.now(), entryId: null, noPermintaan, ...data };
       await persistRequests([...requests, newReq]);
-      showToast("Permintaan dana disimpan.");
+      showToast(`Permintaan dana ${noPermintaan} disimpan.`);
     }
     setShowRequestModal(false);
     setEditingRequest(null);
@@ -675,9 +696,10 @@ export default function BukuKas() {
   function requestTotal(req) {
     return (req.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.harga) || 0), 0);
   }
-  async function convertRequestToExpense(req) {
+  async function convertRequestToExpense(req, tanggalPencatatan) {
     const project = projects.find((p) => p.id === req.projectId);
     const items = req.items || [];
+    const tanggal = tanggalPencatatan || req.tanggal;
     // Satu baris buku kas per item, supaya rincian belanja (nama, qty, harga)
     // langsung terlihat di laporan — bukan dirangkum jadi satu baris saja.
     const newEntries = items.map((it) => {
@@ -689,8 +711,9 @@ export default function BukuKas() {
         bulan: null,
         projectId: req.projectId,
         createdAt: Date.now(),
-        tanggal: req.tanggal,
+        tanggal,
         center: it.center || "",
+        noPermintaan: req.noPermintaan || null,
         keterangan: `${it.nama} (${qty} x ${rupiah(harga)})${req.keterangan ? " — " + req.keterangan : ""}`,
         masuk: 0,
         keluar: qty * harga,
@@ -699,7 +722,29 @@ export default function BukuKas() {
     await persistEntries([...entries, ...newEntries]);
     const nextReq = requests.map((r) => (r.id === req.id ? { ...r, entryId: newEntries.map((e) => e.id).join(",") } : r));
     await persistRequests(nextReq);
+    setConvertingRequest(null);
     showToast(`Dicatat sebagai ${newEntries.length} baris pengeluaran di project "${project?.name || ""}".`);
+  }
+
+  async function recordTransferReceived(req, tanggal, jumlah, catatan) {
+    const project = projects.find((p) => p.id === req.projectId);
+    const newEntry = {
+      id: uid(),
+      scope: "project",
+      bulan: null,
+      projectId: req.projectId,
+      createdAt: Date.now(),
+      tanggal,
+      center: "",
+      keterangan: catatan?.trim() ? catatan.trim() : `Terima dana dari Accounting (Permintaan Dana ${dateLabelID(req.tanggal)})`,
+      masuk: jumlah,
+      keluar: 0,
+    };
+    await persistEntries([...entries, newEntry]);
+    const nextReq = requests.map((r) => (r.id === req.id ? { ...r, transferId: newEntry.id } : r));
+    await persistRequests(nextReq);
+    setTransferringRequest(null);
+    showToast(`Penerimaan dana dicatat di project "${project?.name || ""}".`);
   }
 
   function escapeHtml(s) {
@@ -721,12 +766,13 @@ export default function BukuKas() {
         <td class="mono nowrap" style="text-align:center;color:#8a8672">${r.no}</td>
         <td class="mono nowrap">${dateLabelID(r.tanggal)}</td>
         <td>${escapeHtml(r.center || "—")}</td>
+        ${mode === "project" ? `<td class="mono nowrap" style="color:#7C5E20">${escapeHtml(formatNoPD(r.noPermintaan) || "—")}</td>` : ""}
         <td>${escapeHtml(r.keterangan)}</td>
         <td class="mono nowrap amount" style="text-align:right;color:#2E6B4F;font-weight:500">${r.masuk ? rupiah(r.masuk) : "—"}</td>
         <td class="mono nowrap amount" style="text-align:right;color:#9C3B34;font-weight:500">${r.keluar ? rupiah(r.keluar) : "—"}</td>
         <td class="mono nowrap amount" style="text-align:right;font-weight:700">${rupiah(r.saldo)}</td>
       </tr>`).join("");
-    const colCount = 7;
+    const colCount = mode === "project" ? 8 : 7;
     return `<!DOCTYPE html>
 <html lang="id"><head><meta charset="UTF-8">
 <title>${escapeHtml(scopeTitle)} — ${escapeHtml(scopeSub)}</title>
@@ -817,12 +863,13 @@ export default function BukuKas() {
       <thead><tr>
         <th class="nowrap">No</th><th class="nowrap">Tanggal</th>
         <th style="min-width:70px">Center</th>
+        ${mode === "project" ? '<th class="nowrap">No PD</th>' : ""}
         <th style="width:100%">Keterangan</th><th class="nowrap" style="text-align:right">Uang Masuk</th>
         <th class="nowrap" style="text-align:right">Uang Keluar</th><th class="nowrap" style="text-align:right">Saldo</th>
       </tr></thead>
       <tbody>${bodyRows || `<tr><td colspan="${colCount}" class="empty">Belum ada catatan.</td></tr>`}</tbody>
       ${rows.length ? `<tfoot><tr>
-        <td colspan="4">Total</td>
+        <td colspan="${mode === "project" ? 5 : 4}">Total</td>
         <td class="nowrap" style="text-align:right;color:#2E6B4F">${rupiah(totals.masuk)}</td>
         <td class="nowrap" style="text-align:right;color:#9C3B34">${rupiah(totals.keluar)}</td>
         <td class="nowrap" style="text-align:right">${rupiah(totals.sisa)}</td>
@@ -926,7 +973,7 @@ export default function BukuKas() {
       <div class="mark">${escapeHtml(logoText)}</div>
       <p class="eyebrow">${escapeHtml(companyName || "Buku Kas")}</p>
       <h1>${escapeHtml(project?.name || "-")}</h1>
-      <p class="scope">Form Permintaan Dana</p>
+      <p class="scope">Form Permintaan Dana ${req.noPermintaan ? "— " + escapeHtml(formatNoPD(req.noPermintaan)) : ""}</p>
       <p class="meta">Tanggal: ${dateLabelID(req.tanggal)}</p>
     </header>
     <div class="infobar">
@@ -950,11 +997,11 @@ export default function BukuKas() {
     </table>
     <div class="sig">
       <div class="col">
-        <div class="name">${escapeHtml(req.diajukanOleh || preparer) || "\u00A0"}</div>
+        <div class="name">${escapeHtml(req.dibuatOleh || preparer) || "\u00A0"}</div>
         <div class="lbl">DIAJUKAN OLEH</div>
       </div>
       <div class="col">
-        <div class="name">${escapeHtml(req.disetujuiOleh || checker) || "\u00A0"}</div>
+        <div class="name">${escapeHtml(req.diperiksaOleh || checker) || "\u00A0"}</div>
         <div class="lbl">DISETUJUI OLEH</div>
       </div>
     </div>
@@ -972,7 +1019,8 @@ export default function BukuKas() {
     const a = document.createElement("a");
     a.href = url;
     const scopeName = (project?.name || "project").replace(/[^a-z0-9]+/gi, "-");
-    a.download = `Permintaan-Dana-${scopeName}-${req.tanggal}.html`;
+    const pdPart = req.noPermintaan ? `${formatNoPD(req.noPermintaan)}-` : "";
+    a.download = `Permintaan-Dana-${pdPart}${scopeName}-${req.tanggal}.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1209,13 +1257,13 @@ export default function BukuKas() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: T.paperDark, borderBottom: `2px solid ${T.brassDark}` }}>
-                      <Th style={{ width: 44 }}>No</Th>
+                      <Th style={{ width: 80 }}>No PD</Th>
                       <Th style={{ width: 100 }}>Tanggal</Th>
                       <Th>Project</Th>
                       <Th>Keperluan</Th>
                       <Th style={{ width: 90 }}>Item</Th>
                       <Th align="right">Grand Total</Th>
-                      <Th style={{ width: 110 }}>Status</Th>
+                      <Th style={{ width: 150 }}>Status</Th>
                       <Th style={{ width: 130 }}></Th>
                     </tr>
                   </thead>
@@ -1236,26 +1284,41 @@ export default function BukuKas() {
                         <tr key={r.id} style={{ borderBottom: `1px solid ${T.line}` }}
                           className="hover:bg-black/[0.02] cursor-pointer"
                           onClick={() => openEditRequest(r)}>
-                          <Td className="bk-mono">{i + 1}</Td>
+                          <Td className="bk-mono font-semibold" style={{ color: T.brassDark }}>{formatNoPD(r.noPermintaan)}</Td>
                           <Td className="bk-mono">{dateLabelID(r.tanggal)}</Td>
                           <Td>{project?.name || "-"}</Td>
                           <Td>{r.keterangan || "-"}</Td>
                           <Td>{(r.items || []).length} item</Td>
                           <Td align="right" className="bk-mono font-semibold">{rupiah(grand)}</Td>
                           <Td>
-                            {r.entryId ? (
-                              <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full"
-                                style={{ background: T.masukBg, color: T.masuk }}>
-                                <CheckCircle size={11} /> Dicatat
-                              </span>
-                            ) : (
-                              <span className="text-xs" style={{ color: T.inkSoft }}>Belum dicatat</span>
-                            )}
+                            <div className="flex flex-col gap-1">
+                              {r.entryId ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full w-fit"
+                                  style={{ background: T.masukBg, color: T.masuk }}>
+                                  <CheckCircle size={11} /> Dicatat
+                                </span>
+                              ) : (
+                                <span className="text-xs" style={{ color: T.inkSoft }}>Belum dicatat</span>
+                              )}
+                              {r.entryId && (
+                                r.transferId ? (
+                                  <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full w-fit"
+                                    style={{ background: T.brass + "22", color: T.brassDark }}>
+                                    <CheckCircle size={11} /> Dana Diterima
+                                  </span>
+                                ) : (
+                                  <button onClick={(e) => { e.stopPropagation(); setTransferringRequest(r); }}
+                                    className="text-xs font-medium underline text-left w-fit" style={{ color: T.brassDark }}>
+                                    + Catat Terima Dana
+                                  </button>
+                                )
+                              )}
+                            </div>
                           </Td>
                           <Td align="right">
                             <div className="flex items-center gap-1 justify-end" onClick={(e) => e.stopPropagation()}>
                               {!r.entryId && (
-                                <button onClick={() => convertRequestToExpense(r)} title="Catat sebagai pengeluaran di Uang Project"
+                                <button onClick={() => setConvertingRequest(r)} title="Catat sebagai pengeluaran di Uang Project"
                                   className="p-1.5 rounded hover:bg-black/5">
                                   <ArrowRightCircle size={14} style={{ color: T.brassDark }} />
                                 </button>
@@ -1311,6 +1374,7 @@ export default function BukuKas() {
                   <Th style={{ width: 44 }}>No</Th>
                   <Th style={{ width: 100 }}>Tanggal</Th>
                   <Th style={{ width: 120 }}>Center</Th>
+                  {mode === "project" && <Th style={{ width: 90 }}>No PD</Th>}
                   {mode === "project" && <Th>Project</Th>}
                   <Th>Keterangan</Th>
                   <Th align="right">Uang Masuk</Th>
@@ -1322,18 +1386,21 @@ export default function BukuKas() {
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="text-center py-10 text-sm" style={{ color: T.inkSoft }}>
+                    <td colSpan={9} className="text-center py-10 text-sm" style={{ color: T.inkSoft }}>
                       Belum ada catatan{mode === "bulanan" ? " di bulan ini." : " di project ini."}
                     </td>
                   </tr>
                 )}
                 {rows.map((r) => (
-                  <tr key={r.id} style={{ borderBottom: `1px solid ${T.line}` }}
+                  <tr key={r.id} data-entry-id={r.id} style={{ borderBottom: `1px solid ${T.line}` }}
                     className="hover:bg-black/[0.02] cursor-pointer"
                     onClick={() => openEditEntry(r)}>
                     <Td className="bk-mono">{r.no}</Td>
                     <Td className="bk-mono">{dateLabelID(r.tanggal)}</Td>
                     <Td style={{ color: T.inkSoft }}>{r.center || "—"}</Td>
+                    {mode === "project" && (
+                      <Td className="bk-mono" style={{ color: T.brassDark }}>{formatNoPD(r.noPermintaan) || "—"}</Td>
+                    )}
                     {mode === "project" && <Td>{projects.find((p) => p.id === r.projectId)?.name || "-"}</Td>}
                     <Td>{r.keterangan}</Td>
                     <Td align="right" className="bk-mono" style={{ color: T.masuk }}>
@@ -1358,7 +1425,7 @@ export default function BukuKas() {
               {rows.length > 0 && (
                 <tfoot>
                   <tr style={{ borderTop: `2px solid ${T.brassDark}`, background: T.paperDark }}>
-                    <Td colSpan={mode === "project" ? 5 : 4} className="font-semibold">Total</Td>
+                    <Td colSpan={mode === "project" ? 6 : 4} className="font-semibold">Total</Td>
                     <Td align="right" className="bk-mono font-bold" style={{ color: T.masuk }}>{rupiah(totals.masuk)}</Td>
                     <Td align="right" className="bk-mono font-bold" style={{ color: T.keluar }}>{rupiah(totals.keluar)}</Td>
                     <Td align="right" className="bk-mono font-bold">{rupiah(totals.sisa)}</Td>
@@ -1419,6 +1486,27 @@ export default function BukuKas() {
         )}
       </div>
 
+
+      {ready && (mode === "bulanan" || (mode === "project" && !locked && currentProjectId)) && (
+        <button
+          onClick={openNewEntry}
+          title="Tambah Catatan"
+          className="no-print fixed bottom-24 right-5 sm:right-8 w-14 h-14 rounded-full flex items-center justify-center shadow-lg z-40"
+          style={{ background: T.brass, color: T.white }}
+        >
+          <Plus size={26} />
+        </button>
+      )}
+      {ready && mode === "permintaan" && projects.length > 0 && (
+        <button
+          onClick={openNewRequest}
+          title="Buat Permintaan Dana"
+          className="no-print fixed bottom-24 right-5 sm:right-8 w-14 h-14 rounded-full flex items-center justify-center shadow-lg z-40"
+          style={{ background: T.brass, color: T.white }}
+        >
+          <Plus size={26} />
+        </button>
+      )}
 
       {toast && (
         <div className="no-print fixed bottom-4 right-4 px-4 py-2.5 rounded-md text-sm shadow-lg flex items-center gap-2"
@@ -1499,6 +1587,21 @@ export default function BukuKas() {
           onClose={() => setShowMembersModal(false)}
         />
       )}
+      {transferringRequest && (
+        <TransferModal
+          request={transferringRequest}
+          defaultAmount={requestTotal(transferringRequest)}
+          onClose={() => setTransferringRequest(null)}
+          onSave={(tanggal, jumlah, catatan) => recordTransferReceived(transferringRequest, tanggal, jumlah, catatan)}
+        />
+      )}
+      {convertingRequest && (
+        <ConvertModal
+          request={convertingRequest}
+          onClose={() => setConvertingRequest(null)}
+          onSave={(tanggal) => convertRequestToExpense(convertingRequest, tanggal)}
+        />
+      )}
       {pendingImport && (
         <ConfirmModal
           title="Pulihkan Data"
@@ -1525,8 +1628,9 @@ export default function BukuKas() {
           projects={projects}
           existingCenters={uniqueCenters}
           defaultProjectId={requestProjectFilter || projects[0]?.id || ""}
-          defaultDiajukanOleh={preparer}
-          defaultDisetujuiOleh={checker}
+          defaultPreparer={preparer}
+          defaultChecker={checker}
+          onCreateProject={createProject}
           onClose={() => { setShowRequestModal(false); setEditingRequest(null); }}
           onSave={saveRequest}
         />
@@ -1549,6 +1653,22 @@ export default function BukuKas() {
                 <button onClick={() => setShowPreview(false)} className="p-1.5 rounded hover:bg-white/10">
                   <X size={18} />
                 </button>
+              </div>
+            </div>
+            <div className="flex-shrink-0 grid grid-cols-2 gap-3 px-4 py-3" style={{ background: T.paperDark, borderBottom: `1px solid ${T.line}` }}>
+              <div>
+                <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Dibuat oleh</label>
+                <input value={preparer} onChange={(e) => setPreparer(e.target.value)}
+                  onBlur={() => persistSignatures(preparer, checker)}
+                  placeholder="Nama" className="w-full text-sm px-2 py-1.5 rounded-md"
+                  style={{ border: `1px solid ${T.line}` }} />
+              </div>
+              <div>
+                <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Diperiksa oleh</label>
+                <input value={checker} onChange={(e) => setChecker(e.target.value)}
+                  onBlur={() => persistSignatures(preparer, checker)}
+                  placeholder="Nama" className="w-full text-sm px-2 py-1.5 rounded-md"
+                  style={{ border: `1px solid ${T.line}` }} />
               </div>
             </div>
             <iframe title="Pratinjau Laporan" srcDoc={buildReportHTML({ preview: true })} className="flex-1 w-full border-0" />
@@ -1934,16 +2054,42 @@ function EntryModal({ initial, existingCenters = [], apiKey, onClose, onSave }) 
   );
 }
 
-function RequestModal({ initial, projects, existingCenters = [], defaultProjectId, defaultDiajukanOleh = "", defaultDisetujuiOleh = "", onClose, onSave }) {
+function RequestModal({ initial, projects, existingCenters = [], defaultProjectId, defaultPreparer = "", defaultChecker = "", onCreateProject, onClose, onSave }) {
   const [projectId, setProjectId] = useState(initial?.projectId || defaultProjectId || "");
   const [tanggal, setTanggal] = useState(initial?.tanggal || todayISO());
   const [peminta, setPeminta] = useState(initial?.peminta || "");
   const [keterangan, setKeterangan] = useState(initial?.keterangan || "");
-  const [diajukanOleh, setDiajukanOleh] = useState(initial?.diajukanOleh ?? defaultDiajukanOleh);
-  const [disetujuiOleh, setDisetujuiOleh] = useState(initial?.disetujuiOleh ?? defaultDisetujuiOleh);
+  const [dibuatOleh, setDibuatOleh] = useState(initial?.dibuatOleh ?? defaultPreparer);
+  const [diperiksaOleh, setDiperiksaOleh] = useState(initial?.diperiksaOleh ?? defaultChecker);
   const [items, setItems] = useState(
     initial?.items?.length ? initial.items.map((it) => ({ center: "", ...it })) : [{ id: uid(), center: "", nama: "", qty: "", harga: "" }]
   );
+  const [localExtraProjects, setLocalExtraProjects] = useState([]);
+  const [showNewProjectRow, setShowNewProjectRow] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+
+  const allProjects = useMemo(() => {
+    const merged = [...projects];
+    localExtraProjects.forEach((p) => { if (!merged.find((m) => m.id === p.id)) merged.push(p); });
+    return merged;
+  }, [projects, localExtraProjects]);
+
+  async function handleCreateProjectInline() {
+    if (!newProjectName.trim() || !onCreateProject) return;
+    setCreatingProject(true);
+    try {
+      const newProj = await onCreateProject(newProjectName.trim());
+      if (newProj) {
+        setLocalExtraProjects((prev) => [...prev, newProj]);
+        setProjectId(newProj.id);
+        setNewProjectName("");
+        setShowNewProjectRow(false);
+      }
+    } finally {
+      setCreatingProject(false);
+    }
+  }
 
   function updateItem(id, field, value) {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
@@ -1966,8 +2112,8 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
       tanggal,
       peminta: peminta.trim(),
       keterangan: keterangan.trim(),
-      diajukanOleh: diajukanOleh.trim(),
-      disetujuiOleh: disetujuiOleh.trim(),
+      dibuatOleh: dibuatOleh.trim(),
+      diperiksaOleh: diperiksaOleh.trim(),
       items: items
         .filter((it) => it.nama.trim())
         .map((it) => ({ id: it.id, center: (it.center || "").trim(), nama: it.nama.trim(), qty: Number(it.qty) || 0, harga: Number(it.harga) || 0 })),
@@ -1987,14 +2133,37 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
           <button onClick={onClose} className="p-1 rounded hover:bg-black/5"><X size={18} /></button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
           <div>
             <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Project</label>
             <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
               className="w-full text-sm px-3 py-2 rounded-md" style={{ border: `1px solid ${T.line}` }}>
               <option value="">Pilih project...</option>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {allProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
+            {!showNewProjectRow ? (
+              <button type="button" onClick={() => setShowNewProjectRow(true)}
+                className="text-xs font-medium underline mt-1" style={{ color: T.brassDark }}>
+                + Project Baru
+              </button>
+            ) : (
+              <div className="flex gap-1.5 mt-1.5">
+                <input autoFocus value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder="Nama project baru"
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleCreateProjectInline(); } }}
+                  className="flex-1 text-sm px-2 py-1.5 rounded-md" style={{ border: `1px solid ${T.line}` }} />
+                <button type="button" onClick={handleCreateProjectInline}
+                  disabled={creatingProject || !newProjectName.trim()}
+                  className="text-xs font-medium px-3 py-1.5 rounded-md disabled:opacity-40"
+                  style={{ background: T.brass, color: T.white }}>
+                  Buat
+                </button>
+                <button type="button" onClick={() => { setShowNewProjectRow(false); setNewProjectName(""); }}
+                  className="text-xs font-medium px-2 py-1.5 rounded-md" style={{ border: `1px solid ${T.line}` }}>
+                  Batal
+                </button>
+              </div>
+            )}
           </div>
           <div>
             <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Tanggal</label>
@@ -2013,13 +2182,13 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
               style={{ border: `1px solid ${T.line}` }} />
           </div>
           <div>
-            <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Diajukan oleh</label>
-            <input value={diajukanOleh} onChange={(e) => setDiajukanOleh(e.target.value)}
+            <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Dibuat oleh (untuk tanda tangan)</label>
+            <input value={dibuatOleh} onChange={(e) => setDibuatOleh(e.target.value)}
               placeholder="Nama" className="w-full text-sm px-3 py-2 rounded-md" style={{ border: `1px solid ${T.line}` }} />
           </div>
           <div>
-            <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Disetujui oleh</label>
-            <input value={disetujuiOleh} onChange={(e) => setDisetujuiOleh(e.target.value)}
+            <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Diperiksa/disetujui oleh (untuk tanda tangan)</label>
+            <input value={diperiksaOleh} onChange={(e) => setDiperiksaOleh(e.target.value)}
               placeholder="Nama" className="w-full text-sm px-3 py-2 rounded-md" style={{ border: `1px solid ${T.line}` }} />
           </div>
         </div>
@@ -2151,6 +2320,76 @@ function MembersModal({ projectName, members, busy, onInvite, onRemove, onClose 
           </div>
         ))}
       </div>
+    </ModalShell>
+  );
+}
+
+function TransferModal({ request, defaultAmount, onClose, onSave }) {
+  const [tanggal, setTanggal] = useState(todayISO());
+  const [jumlah, setJumlah] = useState(String(defaultAmount || ""));
+  const [catatan, setCatatan] = useState("");
+
+  function handleSubmit() {
+    const amount = Number(jumlah) || 0;
+    if (!tanggal || amount <= 0) return;
+    onSave(tanggal, amount, catatan);
+  }
+
+  return (
+    <ModalShell onClose={onClose} title="Catat Terima Dana dari Accounting">
+      <p className="text-xs mb-4" style={{ color: T.inkSoft }}>
+        Ini akan menambahkan satu baris <b>Uang Masuk</b> di buku kas project ini, mencatat
+        tanggal dan jumlah dana yang benar-benar ditransfer accounting untuk permintaan dana ini.
+      </p>
+
+      <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Tanggal Diterima</label>
+      <input type="date" value={tanggal} onChange={(e) => setTanggal(e.target.value)}
+        className="w-full text-sm px-3 py-2 rounded-md mb-3" style={{ border: `1px solid ${T.line}` }} />
+
+      <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Jumlah Diterima (Rp)</label>
+      <input type="number" value={jumlah} onChange={(e) => setJumlah(e.target.value)}
+        placeholder="0" className="bk-mono w-full text-sm px-3 py-2 rounded-md mb-1"
+        style={{ border: `1px solid ${T.line}` }} />
+      <p className="text-xs mb-3" style={{ color: T.inkSoft }}>
+        Otomatis terisi sesuai Grand Total permintaan ({rupiah(defaultAmount)}) — ubah kalau jumlah yang ditransfer beda.
+      </p>
+
+      <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Keterangan (opsional)</label>
+      <input value={catatan} onChange={(e) => setCatatan(e.target.value)}
+        placeholder={`Terima dana dari Accounting (Permintaan Dana ${dateLabelID(request.tanggal)})`}
+        className="w-full text-sm px-3 py-2 rounded-md mb-4" style={{ border: `1px solid ${T.line}` }} />
+
+      <button onClick={handleSubmit}
+        disabled={!tanggal || !(Number(jumlah) > 0)}
+        className="w-full py-2 rounded-md text-sm font-medium disabled:opacity-40"
+        style={{ background: T.brass, color: T.white }}>
+        Simpan
+      </button>
+    </ModalShell>
+  );
+}
+
+function ConvertModal({ request, onClose, onSave }) {
+  const [tanggal, setTanggal] = useState(request.tanggal || todayISO());
+
+  return (
+    <ModalShell onClose={onClose} title="Catat sebagai Pengeluaran">
+      <p className="text-xs mb-4" style={{ color: T.inkSoft }}>
+        Setiap item di permintaan dana ini akan dicatat sebagai baris Uang Keluar
+        di buku kas project. Pilih tanggal pencatatannya — defaultnya tanggal
+        permintaan dibuat, tapi bisa diganti (mis. tanggal barang benar-benar dibeli).
+      </p>
+
+      <label className="text-xs font-medium block mb-1" style={{ color: T.inkSoft }}>Tanggal Pencatatan</label>
+      <input type="date" value={tanggal} onChange={(e) => setTanggal(e.target.value)}
+        className="w-full text-sm px-3 py-2 rounded-md mb-4" style={{ border: `1px solid ${T.line}` }} />
+
+      <button onClick={() => onSave(tanggal)}
+        disabled={!tanggal}
+        className="w-full py-2 rounded-md text-sm font-medium disabled:opacity-40"
+        style={{ background: T.brass, color: T.white }}>
+        Catat Sekarang
+      </button>
     </ModalShell>
   );
 }
