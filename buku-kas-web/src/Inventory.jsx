@@ -98,11 +98,25 @@ function ModalShell({ onClose, title, children, wide }) {
    INVENTORY VIEW — daftar unit, filter per cabang & status,
    tambah/edit unit + riwayat maintenance.
 ============================================================ */
-export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenance }) {
+export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenance, onRequestReplacement }) {
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);
   const [statusFilter, setStatusFilter] = useState("semua");
   const [cabangFilter, setCabangFilter] = useState("semua");
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function cancelSelect() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }
   const [viewMode, setViewMode] = useState(() => {
     try { return localStorage.getItem("bk_inventory_view") || "grid"; } catch (e) { return "grid"; }
   });
@@ -182,6 +196,17 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
               style={{ border: `1px solid ${T.line}`, color: T.inkSoft, background: T.white }}>
               <Upload size={13} /> Import CSV
             </button>
+            {onRequestReplacement && (
+              <button onClick={() => (selectMode ? cancelSelect() : setSelectMode(true))}
+                className="text-xs px-3 py-2 rounded-md font-medium"
+                style={{
+                  border: `1px solid ${selectMode ? T.keluar : T.line}`,
+                  color: selectMode ? T.keluar : T.inkSoft,
+                  background: T.white,
+                }}>
+                {selectMode ? "Batal pilih" : "Pilih untuk RAB"}
+              </button>
+            )}
             <button onClick={() => setShowAdd(true)}
               className="flex items-center gap-1 text-sm px-3 py-2 rounded-md font-medium"
               style={{ background: T.brass, color: T.white }}>
@@ -189,6 +214,24 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
             </button>
           </div>
         </div>
+
+        {selectMode && (
+          <div className="flex items-center justify-between gap-3 mb-3 px-3 py-2 rounded-md"
+            style={{ background: T.keluarBg, color: T.keluar }}>
+            <span className="text-sm font-medium">{selectedIds.size} unit dipilih</span>
+            <button
+              disabled={selectedIds.size === 0}
+              onClick={() => {
+                const selected = items.filter((i) => selectedIds.has(i.id));
+                onRequestReplacement(selected);
+                cancelSelect();
+              }}
+              className="text-xs px-3 py-1.5 rounded-md font-semibold disabled:opacity-40"
+              style={{ background: T.keluar, color: T.white }}>
+              Ajukan Penggantian →
+            </button>
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-2 mb-2">
           {[
@@ -249,6 +292,7 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
             <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: T.ink, color: T.white }}>
+                  {selectMode && <th className="px-2.5 py-1.5" style={{ width: 28 }}></th>}
                   {["Unit", "Kategori", "Lokasi", "Umur", "Status"].map((h) => (
                     <th key={h} className="text-left px-2.5 py-1.5 text-xs font-medium">{h}</th>
                   ))}
@@ -262,8 +306,13 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
                     ? { bg: T.line, fg: T.inkSoft, label: item.status_pakai }
                     : s;
                   return (
-                    <tr key={item.id} onClick={() => setEditing(item)} className="cursor-pointer"
-                      style={{ borderBottom: `1px solid ${T.line}` }}>
+                    <tr key={item.id} onClick={() => (selectMode ? toggleSelect(item.id) : setEditing(item))} className="cursor-pointer"
+                      style={{ borderBottom: `1px solid ${T.line}`, background: selectedIds.has(item.id) ? T.keluarBg : "transparent" }}>
+                      {selectMode && (
+                        <td className="px-2.5 py-2">
+                          <input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelect(item.id)} onClick={(e) => e.stopPropagation()} />
+                        </td>
+                      )}
                       <td className="px-2.5 py-2">
                         <div className="font-semibold bk-display" style={{ color: T.ink }}>
                           {item.merk}{item.model ? ` ${item.model}` : ""}
@@ -288,8 +337,12 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
                   ? { bg: T.line, fg: T.inkSoft, label: item.status_pakai }
                   : s;
                 return (
-                  <button key={item.id} onClick={() => setEditing(item)} type="button" className="text-left p-4 rounded-lg"
-                    style={{ background: T.white, border: `1px solid ${T.line}` }}>
+                  <button key={item.id} onClick={() => (selectMode ? toggleSelect(item.id) : setEditing(item))} type="button" className="text-left p-4 rounded-lg relative"
+                    style={{ background: selectedIds.has(item.id) ? T.keluarBg : T.white, border: `1px solid ${selectedIds.has(item.id) ? T.keluar : T.line}` }}>
+                    {selectMode && (
+                      <input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelect(item.id)} onClick={(e) => e.stopPropagation()}
+                        className="absolute top-3 right-3" />
+                    )}
                     <div className="text-xs mb-1" style={{ color: T.inkSoft }}>
                       {item.kategori}{item.nama_pc ? ` · ${item.nama_pc}` : ""}
                     </div>

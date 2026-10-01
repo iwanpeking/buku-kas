@@ -132,6 +132,7 @@ export default function BukuKas() {
   const [requests, setRequests] = useState([]);
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [editingRequest, setEditingRequest] = useState(null);
+  const [requestDraft, setRequestDraft] = useState(null);
   const [confirmDeleteRequestId, setConfirmDeleteRequestId] = useState(null);
   const [previewRequest, setPreviewRequest] = useState(null);
   const [requestProjectFilter, setRequestProjectFilter] = useState("");
@@ -666,10 +667,28 @@ export default function BukuKas() {
   /* ---------- permintaan dana ---------- */
   function openNewRequest() {
     setEditingRequest(null);
+    setRequestDraft(null);
     setShowRequestModal(true);
   }
   function openEditRequest(req) {
     setEditingRequest(req);
+    setRequestDraft(null);
+    setShowRequestModal(true);
+  }
+  function openRequestFromInventory(selectedItems) {
+    const draftItems = selectedItems.map((it) => ({
+      id: uid(),
+      center: it.cabang || "",
+      nama: `Penggantian ${it.merk || "unit"}${it.model ? " " + it.model : ""}${it.nama_pc ? ` (${it.nama_pc})` : ""}`,
+      qty: 1,
+      harga: "",
+    }));
+    setRequestDraft({
+      keterangan: `Pengajuan penggantian ${selectedItems.length} unit komputer (umur melewati standar)`,
+      items: draftItems,
+    });
+    setEditingRequest(null);
+    setMode("permintaan");
     setShowRequestModal(true);
   }
   async function saveRequest(data) {
@@ -1358,6 +1377,7 @@ export default function BukuKas() {
             onUpdate={updateInventoryItem}
             onDelete={deleteInventoryItem}
             onAddMaintenance={addInventoryMaintenance}
+            onRequestReplacement={openRequestFromInventory}
           />
         ) : mode === "laporan" ? (
           <LaporanInventaris items={inventoryItems} />
@@ -1635,13 +1655,14 @@ export default function BukuKas() {
       {showRequestModal && (
         <RequestModal
           initial={editingRequest}
+          draft={requestDraft}
           projects={projects}
           existingCenters={uniqueCenters}
           defaultProjectId={requestProjectFilter || projects[0]?.id || ""}
           defaultPreparer={preparer}
           defaultChecker={checker}
           onCreateProject={createProject}
-          onClose={() => { setShowRequestModal(false); setEditingRequest(null); }}
+          onClose={() => { setShowRequestModal(false); setEditingRequest(null); setRequestDraft(null); }}
           onSave={saveRequest}
         />
       )}
@@ -2064,15 +2085,19 @@ function EntryModal({ initial, existingCenters = [], apiKey, onClose, onSave }) 
   );
 }
 
-function RequestModal({ initial, projects, existingCenters = [], defaultProjectId, defaultPreparer = "", defaultChecker = "", onCreateProject, onClose, onSave }) {
+function RequestModal({ initial, draft, projects, existingCenters = [], defaultProjectId, defaultPreparer = "", defaultChecker = "", onCreateProject, onClose, onSave }) {
   const [projectId, setProjectId] = useState(initial?.projectId || defaultProjectId || "");
   const [tanggal, setTanggal] = useState(initial?.tanggal || todayISO());
   const [peminta, setPeminta] = useState(initial?.peminta || "");
-  const [keterangan, setKeterangan] = useState(initial?.keterangan || "");
+  const [keterangan, setKeterangan] = useState(initial?.keterangan || draft?.keterangan || "");
   const [dibuatOleh, setDibuatOleh] = useState(initial?.dibuatOleh ?? defaultPreparer);
   const [diperiksaOleh, setDiperiksaOleh] = useState(initial?.diperiksaOleh ?? defaultChecker);
   const [items, setItems] = useState(
-    initial?.items?.length ? initial.items.map((it) => ({ center: "", ...it })) : [{ id: uid(), center: "", nama: "", qty: "", harga: "" }]
+    initial?.items?.length
+      ? initial.items.map((it) => ({ center: "", ...it }))
+      : draft?.items?.length
+        ? draft.items.map((it) => ({ center: "", ...it }))
+        : [{ id: uid(), center: "", nama: "", qty: "", harga: "" }]
   );
   const [localExtraProjects, setLocalExtraProjects] = useState([]);
   const [showNewProjectRow, setShowNewProjectRow] = useState(false);
@@ -2142,6 +2167,12 @@ function RequestModal({ initial, projects, existingCenters = [], defaultProjectI
           </h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-black/5"><X size={18} /></button>
         </div>
+
+        {!initial && draft && (
+          <div className="text-xs rounded-md px-3 py-2 mb-3" style={{ background: T.keluarBg, color: T.keluar }}>
+            Diisi otomatis dari unit yang dipilih di Inventaris — pilih project tujuan dan isi harga satuan tiap unit di bawah.
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
           <div>
