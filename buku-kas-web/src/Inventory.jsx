@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef } from "react";
 import { X, Plus, Printer, Upload } from "lucide-react";
+import { AssignPackageModal } from "./Catalog.jsx";
 
 /* ---------------------------------------------------------
    Token warna disamakan persis dengan T di App.jsx supaya
@@ -98,13 +99,14 @@ function ModalShell({ onClose, title, children, wide }) {
    INVENTORY VIEW — daftar unit, filter per cabang & status,
    tambah/edit unit + riwayat maintenance.
 ============================================================ */
-export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenance, onRequestReplacement }) {
+export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenance, onRequestReplacement, catalog = [] }) {
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);
   const [statusFilter, setStatusFilter] = useState("semua");
   const [cabangFilter, setCabangFilter] = useState("semua");
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [showAssignPaket, setShowAssignPaket] = useState(false);
 
   function toggleSelect(id) {
     setSelectedIds((prev) => {
@@ -221,11 +223,7 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
             <span className="text-sm font-medium">{selectedIds.size} unit dipilih</span>
             <button
               disabled={selectedIds.size === 0}
-              onClick={() => {
-                const selected = items.filter((i) => selectedIds.has(i.id));
-                onRequestReplacement(selected);
-                cancelSelect();
-              }}
+              onClick={() => setShowAssignPaket(true)}
               className="text-xs px-3 py-1.5 rounded-md font-semibold disabled:opacity-40"
               style={{ background: T.keluar, color: T.white }}>
               Ajukan Penggantian →
@@ -379,6 +377,18 @@ export function InventoryView({ items, onAdd, onUpdate, onDelete, onAddMaintenan
           onSave={(data) => { onUpdate(editing.id, data); setEditing(null); }}
           onDelete={() => { if (confirm("Hapus unit ini dari inventaris?")) { onDelete(editing.id); setEditing(null); } }}
           onAddMaintenance={(entry) => onAddMaintenance(editing.id, entry)}
+        />
+      )}
+      {showAssignPaket && (
+        <AssignPackageModal
+          selectedItems={items.filter((i) => selectedIds.has(i.id))}
+          catalog={catalog}
+          onClose={() => setShowAssignPaket(false)}
+          onConfirm={({ items: builtItems, keterangan }) => {
+            onRequestReplacement({ items: builtItems, keterangan });
+            setShowAssignPaket(false);
+            cancelSelect();
+          }}
         />
       )}
     </div>

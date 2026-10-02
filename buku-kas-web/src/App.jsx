@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase } from "./supabaseClient.js";
 import { InventoryView, LaporanInventaris } from "./Inventory.jsx";
+import { CatalogView } from "./Catalog.jsx";
 import {
   Plus, Printer, Upload, CheckCircle2, ChevronLeft, ChevronRight,
   Trash2, X, Lock, Unlock, FolderPlus, Loader2, ArrowDownCircle,
@@ -139,6 +140,7 @@ export default function BukuKas() {
 
   const [currentUser, setCurrentUser] = useState(null);
   const [inventoryItems, setInventoryItems] = useState([]);
+  const [priceCatalog, setPriceCatalog] = useState([]);
   const projectDataRef = useRef({}); // projectId -> {name,status,selesaiAt,entries,requests}
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [projectMembers, setProjectMembers] = useState([]);
@@ -176,6 +178,17 @@ export default function BukuKas() {
           console.error("Gagal memuat inventaris:", invErr);
         } else {
           setInventoryItems(invRows || []);
+        }
+
+        const { data: catalogRows, error: catErr } = await supabase
+          .from("price_catalog")
+          .select("*")
+          .order("paket", { ascending: true })
+          .order("urutan", { ascending: true });
+        if (catErr) {
+          console.error("Gagal memuat katalog harga:", catErr);
+        } else {
+          setPriceCatalog(catalogRows || []);
         }
 
         const projectsList = [];
@@ -357,6 +370,41 @@ export default function BukuKas() {
     } catch (err) {
       console.error(err);
       showToast("Gagal menambahkan riwayat maintenance.", "error");
+    }
+  }
+
+  /* ---------- katalog harga CRUD ---------- */
+  async function addCatalogItem(data) {
+    try {
+      const { data: row, error } = await supabase.from("price_catalog").insert(data).select().single();
+      if (error) throw error;
+      setPriceCatalog((prev) => [...prev, row]);
+      showToast("Komponen ditambahkan ke katalog.");
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal menyimpan ke katalog.", "error");
+    }
+  }
+  async function updateCatalogItem(id, patch) {
+    try {
+      const { error } = await supabase.from("price_catalog").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+      if (error) throw error;
+      setPriceCatalog((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+      showToast("Katalog diperbarui.");
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal memperbarui katalog.", "error");
+    }
+  }
+  async function deleteCatalogItem(id) {
+    try {
+      const { error } = await supabase.from("price_catalog").delete().eq("id", id);
+      if (error) throw error;
+      setPriceCatalog((prev) => prev.filter((i) => i.id !== id));
+      showToast("Komponen dihapus dari katalog.");
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal menghapus dari katalog.", "error");
     }
   }
 
@@ -675,18 +723,8 @@ export default function BukuKas() {
     setRequestDraft(null);
     setShowRequestModal(true);
   }
-  function openRequestFromInventory(selectedItems) {
-    const draftItems = selectedItems.map((it) => ({
-      id: uid(),
-      center: it.cabang || "",
-      nama: `Penggantian ${it.merk || "unit"}${it.model ? " " + it.model : ""}${it.nama_pc ? ` (${it.nama_pc})` : ""}`,
-      qty: 1,
-      harga: "",
-    }));
-    setRequestDraft({
-      keterangan: `Pengajuan penggantian ${selectedItems.length} unit komputer (umur melewati standar)`,
-      items: draftItems,
-    });
+  function openRequestFromInventory({ items, keterangan }) {
+    setRequestDraft({ keterangan, items });
     setEditingRequest(null);
     setMode("permintaan");
     setShowRequestModal(true);
@@ -1117,6 +1155,7 @@ export default function BukuKas() {
               { key: "project", label: "Uang Project" },
               { key: "permintaan", label: "Permintaan Dana" },
               { key: "inventaris", label: "Inventaris" },
+              { key: "katalog", label: "Katalog" },
               { key: "laporan", label: "Laporan" },
             ].map((t) => (
               <button
@@ -1140,7 +1179,7 @@ export default function BukuKas() {
 
       <div className="max-w-5xl mx-auto px-4 sm:px-8 py-6">
         {/* SCOPE SELECTOR */}
-        {mode !== "inventaris" && mode !== "laporan" && (
+        {mode !== "inventaris" && mode !== "laporan" && mode !== "katalog" && (
         <div className="no-print flex flex-wrap items-center justify-between gap-3 mb-5">
           {mode === "bulanan" ? (
             <div className="flex items-center gap-2">
@@ -1378,6 +1417,14 @@ export default function BukuKas() {
             onDelete={deleteInventoryItem}
             onAddMaintenance={addInventoryMaintenance}
             onRequestReplacement={openRequestFromInventory}
+            catalog={priceCatalog}
+          />
+        ) : mode === "katalog" ? (
+          <CatalogView
+            catalog={priceCatalog}
+            onAdd={addCatalogItem}
+            onUpdate={updateCatalogItem}
+            onDelete={deleteCatalogItem}
           />
         ) : mode === "laporan" ? (
           <LaporanInventaris items={inventoryItems} />
