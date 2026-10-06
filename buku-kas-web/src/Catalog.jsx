@@ -34,9 +34,20 @@ function ModalShell({ onClose, title, children }) {
   );
 }
 
-export function CatalogView({ catalog, onAdd, onUpdate, onDelete }) {
+export function CatalogView({ catalog, onAdd, onUpdate, onDelete, onFetchHistory }) {
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [historyItem, setHistoryItem] = useState(null);
+  const [historyRows, setHistoryRows] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  async function openHistory(item) {
+    setHistoryItem(item);
+    setHistoryLoading(true);
+    const rows = await onFetchHistory(item.id);
+    setHistoryRows(rows);
+    setHistoryLoading(false);
+  }
 
   const groups = useMemo(() => {
     const map = {};
@@ -94,6 +105,9 @@ export function CatalogView({ catalog, onAdd, onUpdate, onDelete }) {
                   <td className="px-2.5 py-2 bk-mono">{item.qty_per_unit}</td>
                   <td className="px-2.5 py-2 bk-mono">{rupiah(item.harga_satuan)}</td>
                   <td className="px-2.5 py-2 text-right whitespace-nowrap">
+                    <button onClick={() => openHistory(item)} className="text-xs underline mr-2" style={{ color: T.inkSoft }}>
+                      Riwayat
+                    </button>
                     <button onClick={() => setEditing(item)} className="p-1 rounded hover:bg-black/5" title="Edit">
                       <Pencil size={14} />
                     </button>
@@ -123,6 +137,34 @@ export function CatalogView({ catalog, onAdd, onUpdate, onDelete }) {
           onClose={() => setEditing(null)}
           onSave={(data) => { onUpdate(editing.id, data); setEditing(null); }}
         />
+      )}
+      {historyItem && (
+        <ModalShell onClose={() => setHistoryItem(null)} title={`Riwayat — ${historyItem.nama_barang}`}>
+          {historyLoading && <div className="text-sm" style={{ color: T.inkSoft }}>Memuat...</div>}
+          {!historyLoading && historyRows.length === 0 && (
+            <div className="text-sm" style={{ color: T.inkSoft }}>
+              Belum ada riwayat — komponen ini belum pernah diedit sejak pertama dibuat.
+            </div>
+          )}
+          {!historyLoading && historyRows.length > 0 && (
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              <div className="text-xs mb-2" style={{ color: T.inkSoft }}>
+                Versi saat ini: <b style={{ color: T.ink }}>{historyItem.nama_barang}</b> — {rupiah(historyItem.harga_satuan)}
+              </div>
+              {historyRows.map((h) => (
+                <div key={h.id} className="p-2.5 rounded-md text-sm" style={{ background: T.paper }}>
+                  <div className="flex justify-between">
+                    <span style={{ color: T.ink }}>{h.nama_barang}</span>
+                    <span className="bk-mono" style={{ color: T.ink }}>{rupiah(h.harga_satuan)}</span>
+                  </div>
+                  <div className="text-xs mt-0.5" style={{ color: T.inkSoft }}>
+                    berlaku sampai {new Date(h.recorded_at).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ModalShell>
       )}
     </div>
   );
@@ -211,6 +253,13 @@ export function AssignPackageModal({ selectedItems, catalog, onClose, onConfirm 
     selectedItems.forEach((it) => { init[it.id] = ""; });
     return init;
   });
+  const [ringkas, setRingkas] = useState(false);
+
+  function paketTotal(paket) {
+    return catalog
+      .filter((c) => c.paket === paket)
+      .reduce((s, row) => s + (Number(row.qty_per_unit) || 0) * (Number(row.harga_satuan) || 0), 0);
+  }
 
   function buildAndConfirm() {
     const items = [];
@@ -219,6 +268,16 @@ export function AssignPackageModal({ selectedItems, catalog, onClose, onConfirm 
       const label = `${unit.merk || "unit"}${unit.model ? " " + unit.model : ""}${unit.nama_pc ? ` (${unit.nama_pc})` : ""}`;
       if (!paket) {
         items.push({ id: uid(), center: unit.cabang || "", nama: `Penggantian ${label}`, qty: 1, harga: "" });
+        return;
+      }
+      if (ringkas) {
+        items.push({
+          id: uid(),
+          center: unit.cabang || "",
+          nama: `Komputer ${paket} — ganti ${label}`,
+          qty: 1,
+          harga: paketTotal(paket),
+        });
         return;
       }
       const rows = catalog.filter((c) => c.paket === paket).sort((a, b) => (a.urutan || 0) - (b.urutan || 0));
@@ -239,9 +298,25 @@ export function AssignPackageModal({ selectedItems, catalog, onClose, onConfirm 
   return (
     <ModalShell onClose={onClose} title="Pilih Paket Pengganti">
       <p className="text-xs mb-3" style={{ color: T.inkSoft }}>
-        Pilih paket untuk tiap unit — otomatis dipecah jadi rincian komponen dengan harga dari Katalog.
-        Boleh dikosongkan ("Isi manual") kalau mau isi harga sendiri nanti.
+        Pilih paket untuk tiap unit. Boleh dikosongkan ("Isi manual") kalau mau isi harga sendiri nanti.
       </p>
+
+      <div className="flex rounded-md overflow-hidden mb-3" style={{ border: `1px solid ${T.line}`, width: "fit-content" }}>
+        <button onClick={() => setRingkas(false)} className="text-xs px-3 py-1.5 font-medium"
+          style={{ background: !ringkas ? T.brass : T.white, color: !ringkas ? T.white : T.inkSoft }}>
+          Rincian per komponen
+        </button>
+        <button onClick={() => setRingkas(true)} className="text-xs px-3 py-1.5 font-medium"
+          style={{ background: ringkas ? T.brass : T.white, color: ringkas ? T.white : T.inkSoft, borderLeft: `1px solid ${T.line}` }}>
+          Ringkas per unit
+        </button>
+      </div>
+      <p className="text-xs mb-3" style={{ color: T.inkSoft }}>
+        {ringkas
+          ? "1 unit = 1 baris, nama paket + total harga langsung (mis. \"Komputer Kasir — Rp 7.965.000\")."
+          : "1 unit dipecah jadi beberapa baris sesuai komponen di Katalog (Processor, Motherboard, dst)."}
+      </p>
+
       <div className="space-y-3 mb-4 max-h-80 overflow-y-auto">
         {selectedItems.map((unit) => (
           <div key={unit.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md" style={{ background: T.paper }}>
@@ -253,11 +328,16 @@ export function AssignPackageModal({ selectedItems, catalog, onClose, onConfirm 
                 {unit.nama_pc ? `${unit.nama_pc} · ` : ""}{unit.cabang || "belum ada cabang"}
               </div>
             </div>
-            <select value={assign[unit.id]} onChange={(e) => setAssign((s) => ({ ...s, [unit.id]: e.target.value }))}
-              className="text-xs px-2 py-1.5 rounded-md" style={{ border: `1px solid ${T.line}` }}>
-              <option value="">Isi manual</option>
-              {pakets.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <div className="text-right">
+              <select value={assign[unit.id]} onChange={(e) => setAssign((s) => ({ ...s, [unit.id]: e.target.value }))}
+                className="text-xs px-2 py-1.5 rounded-md" style={{ border: `1px solid ${T.line}` }}>
+                <option value="">Isi manual</option>
+                {pakets.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              {assign[unit.id] && (
+                <div className="text-xs bk-mono mt-1" style={{ color: T.inkSoft }}>{rupiah(paketTotal(assign[unit.id]))}</div>
+              )}
+            </div>
           </div>
         ))}
       </div>
