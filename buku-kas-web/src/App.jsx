@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { supabase } from "./supabaseClient.js";
 import { InventoryView, LaporanInventaris } from "./Inventory.jsx";
 import { CatalogView } from "./Catalog.jsx";
+import { ServisView } from "./Servis.jsx";
 import {
   Plus, Printer, Upload, CheckCircle2, ChevronLeft, ChevronRight,
   Trash2, X, Lock, Unlock, FolderPlus, Loader2, ArrowDownCircle,
@@ -141,6 +142,7 @@ export default function BukuKas() {
   const [currentUser, setCurrentUser] = useState(null);
   const [inventoryItems, setInventoryItems] = useState([]);
   const [priceCatalog, setPriceCatalog] = useState([]);
+  const [serviceLogs, setServiceLogs] = useState([]);
   const projectDataRef = useRef({}); // projectId -> {name,status,selesaiAt,entries,requests}
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [projectMembers, setProjectMembers] = useState([]);
@@ -189,6 +191,16 @@ export default function BukuKas() {
           console.error("Gagal memuat katalog harga:", catErr);
         } else {
           setPriceCatalog(catalogRows || []);
+        }
+
+        const { data: serviceRows, error: svcErr } = await supabase
+          .from("service_log")
+          .select("*")
+          .order("tanggal_masalah", { ascending: false });
+        if (svcErr) {
+          console.error("Gagal memuat catatan servis:", svcErr);
+        } else {
+          setServiceLogs(serviceRows || []);
         }
 
         const projectsList = [];
@@ -373,6 +385,56 @@ export default function BukuKas() {
     }
   }
 
+  /* ---------- catatan servis CRUD ---------- */
+  function normalizeServiceLog(obj) {
+    const out = { ...obj };
+    ["tanggal_selesai", "unit_id"].forEach((k) => { if (out[k] === "") out[k] = null; });
+    return out;
+  }
+  async function addServiceLog(data) {
+    try {
+      const { data: row, error } = await supabase
+        .from("service_log")
+        .insert(normalizeServiceLog(data))
+        .select()
+        .single();
+      if (error) throw error;
+      setServiceLogs((prev) => [row, ...prev]);
+      showToast("Catatan servis disimpan.");
+      return row;
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal menyimpan catatan servis.", "error");
+      return null;
+    }
+  }
+  async function updateServiceLog(id, patch) {
+    try {
+      const clean = normalizeServiceLog(patch);
+      const { error } = await supabase
+        .from("service_log")
+        .update({ ...clean, updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+      setServiceLogs((prev) => prev.map((l) => (l.id === id ? { ...l, ...clean } : l)));
+      showToast("Catatan servis diperbarui.");
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal memperbarui catatan servis.", "error");
+    }
+  }
+  async function deleteServiceLog(id) {
+    try {
+      const { error } = await supabase.from("service_log").delete().eq("id", id);
+      if (error) throw error;
+      setServiceLogs((prev) => prev.filter((l) => l.id !== id));
+      showToast("Catatan servis dihapus.");
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal menghapus catatan servis.", "error");
+    }
+  }
+
   /* ---------- katalog harga CRUD ---------- */
   async function addCatalogItem(data) {
     try {
@@ -387,13 +449,42 @@ export default function BukuKas() {
   }
   async function updateCatalogItem(id, patch) {
     try {
+      const before = priceCatalog.find((i) => i.id === id);
+      if (before) {
+        const { error: histErr } = await supabase.from("price_catalog_history").insert({
+          item_id: before.id,
+          paket: before.paket,
+          kode: before.kode,
+          komponen: before.komponen,
+          merk: before.merk,
+          nama_barang: before.nama_barang,
+          qty_per_unit: before.qty_per_unit,
+          harga_satuan: before.harga_satuan,
+        });
+        if (histErr) console.error("Gagal menyimpan riwayat katalog:", histErr);
+      }
       const { error } = await supabase.from("price_catalog").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
       if (error) throw error;
       setPriceCatalog((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
-      showToast("Katalog diperbarui.");
+      showToast("Katalog diperbarui, versi lama tersimpan di riwayat.");
     } catch (err) {
       console.error(err);
       showToast("Gagal memperbarui katalog.", "error");
+    }
+  }
+  async function fetchCatalogHistory(itemId) {
+    try {
+      const { data, error } = await supabase
+        .from("price_catalog_history")
+        .select("*")
+        .eq("item_id", itemId)
+        .order("recorded_at", { ascending: false });
+      if (error) throw error;
+      return data || [];
+    } catch (err) {
+      console.error(err);
+      showToast("Gagal memuat riwayat katalog.", "error");
+      return [];
     }
   }
   async function deleteCatalogItem(id) {
@@ -1156,6 +1247,7 @@ export default function BukuKas() {
               { key: "permintaan", label: "Permintaan Dana" },
               { key: "inventaris", label: "Inventaris" },
               { key: "katalog", label: "Katalog" },
+              { key: "servis", label: "Servis" },
               { key: "laporan", label: "Laporan" },
             ].map((t) => (
               <button
@@ -1179,7 +1271,7 @@ export default function BukuKas() {
 
       <div className="max-w-5xl mx-auto px-4 sm:px-8 py-6">
         {/* SCOPE SELECTOR */}
-        {mode !== "inventaris" && mode !== "laporan" && mode !== "katalog" && (
+        {mode !== "inventaris" && mode !== "laporan" && mode !== "katalog" && mode !== "servis" && (
         <div className="no-print flex flex-wrap items-center justify-between gap-3 mb-5">
           {mode === "bulanan" ? (
             <div className="flex items-center gap-2">
@@ -1425,6 +1517,16 @@ export default function BukuKas() {
             onAdd={addCatalogItem}
             onUpdate={updateCatalogItem}
             onDelete={deleteCatalogItem}
+            onFetchHistory={fetchCatalogHistory}
+          />
+        ) : mode === "servis" ? (
+          <ServisView
+            logs={serviceLogs}
+            inventoryItems={inventoryItems}
+            onAdd={addServiceLog}
+            onUpdate={updateServiceLog}
+            onDelete={deleteServiceLog}
+            onAddMaintenance={addInventoryMaintenance}
           />
         ) : mode === "laporan" ? (
           <LaporanInventaris items={inventoryItems} />
