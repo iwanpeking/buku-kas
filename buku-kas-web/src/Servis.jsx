@@ -23,6 +23,12 @@ const STATUS = {
   Selesai: { bg: "#DCEFDD", fg: "#256B36", label: "Selesai" },
 };
 
+// Jenis perangkat yang dilaporkan. Boleh ketik jenis lain sendiri di form
+// (akan ikut muncul sebagai saran & filter berikutnya).
+const KATEGORI_IT = "Komputer / IT";
+const KATEGORI_DEFAULT = [KATEGORI_IT, "Mesin PIU (capit QRIS)", "Jaringan / WiFi", "Lainnya"];
+const LAST_KAT_KEY = "bk_servis_last_kategori";
+
 const rupiah = (n) => "Rp " + Math.round(Number(n) || 0).toLocaleString("id-ID");
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const dateLabelID = (iso) => {
@@ -81,7 +87,26 @@ function Field({ label, children, className = "" }) {
 export function ServisView({ logs, inventoryItems = [], onAdd, onUpdate, onDelete, onAddMaintenance }) {
   const [statusFilter, setStatusFilter] = useState("semua");
   const [cabangFilter, setCabangFilter] = useState("semua");
+  const [kategoriFilter, setKategoriFilter] = useState("semua");
   const [modal, setModal] = useState(null); // { log?, preset? }
+
+  // Jenis yang sudah dipakai di catatan (untuk chip filter)
+  const kategoriUsed = useMemo(() => {
+    const set = new Set(logs.map((l) => (l.kategori || KATEGORI_IT).trim() || KATEGORI_IT));
+    return Array.from(set).sort((a, b) => {
+      const ia = KATEGORI_DEFAULT.indexOf(a), ib = KATEGORI_DEFAULT.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [logs]);
+
+  // Saran jenis di form: bawaan + yang pernah diketik
+  const kategoriOptions = useMemo(
+    () => Array.from(new Set([...KATEGORI_DEFAULT, ...kategoriUsed])),
+    [kategoriUsed]
+  );
 
   const cabangList = useMemo(() => {
     const set = new Set();
@@ -100,12 +125,13 @@ export function ServisView({ logs, inventoryItems = [], onAdd, onUpdate, onDelet
   const filtered = useMemo(() => {
     return logs.filter((l) => {
       if (statusFilter !== "semua" && l.status !== statusFilter) return false;
+      if (kategoriFilter !== "semua" && ((l.kategori || KATEGORI_IT).trim() || KATEGORI_IT) !== kategoriFilter) return false;
       const c = (l.cabang || "").trim();
       if (cabangFilter === "__tanpa") return !c;
       if (cabangFilter !== "semua" && c !== cabangFilter) return false;
       return true;
     });
-  }, [logs, statusFilter, cabangFilter]);
+  }, [logs, statusFilter, cabangFilter, kategoriFilter]);
 
   const groups = useMemo(() => {
     const map = {};
@@ -168,6 +194,20 @@ export function ServisView({ logs, inventoryItems = [], onAdd, onUpdate, onDelet
           </button>
         ))}
       </div>
+      {kategoriUsed.length > 1 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          <button onClick={() => setKategoriFilter("semua")}
+            className="text-xs px-3 py-1.5 rounded-full font-medium" style={chip(kategoriFilter === "semua", T.keluar)}>
+            Semua jenis
+          </button>
+          {kategoriUsed.map((k) => (
+            <button key={k} onClick={() => setKategoriFilter(k)}
+              className="text-xs px-3 py-1.5 rounded-full font-medium" style={chip(kategoriFilter === k, T.keluar)}>
+              {k}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap gap-2 mb-5">
         <button onClick={() => setCabangFilter("semua")}
           className="text-xs px-3 py-1.5 rounded-full font-medium" style={chip(cabangFilter === "semua", T.brass)}>
@@ -202,6 +242,11 @@ export function ServisView({ logs, inventoryItems = [], onAdd, onUpdate, onDelet
                   <div className="flex flex-wrap items-start justify-between gap-2 mb-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <Badge status={l.status} />
+                      {l.kategori && l.kategori !== KATEGORI_IT && (
+                        <span className="text-xs px-2 py-0.5 rounded-md font-medium" style={{ background: T.keluarBg, color: T.keluar }}>
+                          {l.kategori}
+                        </span>
+                      )}
                       {l.unit_label && (
                         <span className="text-xs px-2 py-0.5 rounded-md" style={{ background: T.paper, color: T.inkSoft }}>
                           {l.unit_label}
@@ -256,6 +301,7 @@ export function ServisView({ logs, inventoryItems = [], onAdd, onUpdate, onDelet
           initial={modal.log}
           preset={modal.preset}
           cabangOptions={cabangList}
+          kategoriOptions={kategoriOptions}
           inventoryItems={inventoryItems}
           onClose={() => setModal(null)}
           onSave={async ({ data, syncMaintenance }) => {
@@ -272,9 +318,12 @@ export function ServisView({ logs, inventoryItems = [], onAdd, onUpdate, onDelet
   );
 }
 
-function ServisFormModal({ initial, preset, cabangOptions, inventoryItems, onClose, onSave }) {
+function ServisFormModal({ initial, preset, cabangOptions, kategoriOptions = KATEGORI_DEFAULT, inventoryItems, onClose, onSave }) {
   const presetSelesai = preset === "selesai";
   const [f, setF] = useState({
+    kategori: initial?.kategori || (() => {
+      try { return localStorage.getItem(LAST_KAT_KEY) || KATEGORI_IT; } catch (e) { return KATEGORI_IT; }
+    })(),
     cabang: initial?.cabang || "",
     unit_id: initial?.unit_id || "",
     unit_label: initial?.unit_label || "",
@@ -288,6 +337,7 @@ function ServisFormModal({ initial, preset, cabangOptions, inventoryItems, onClo
   });
   const [syncMaintenance, setSyncMaintenance] = useState(false);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
+  const isIT = (f.kategori || "").trim() === KATEGORI_IT;
 
   const unitOptions = useMemo(() => {
     const c = f.cabang.trim().toLowerCase();
@@ -321,11 +371,14 @@ function ServisFormModal({ initial, preset, cabangOptions, inventoryItems, onClo
     if (!f.keluhan.trim()) { alert("Isi keluhan/kerusakannya dulu ya."); return; }
     if (!f.tanggal_masalah) { alert("Isi tanggal masalahnya."); return; }
     if (f.status === "Selesai" && !f.tanggal_selesai) { alert("Isi tanggal diperbaiki untuk status Selesai."); return; }
+    const kategori = f.kategori.trim() || KATEGORI_IT;
+    try { localStorage.setItem(LAST_KAT_KEY, kategori); } catch (e) { /* abaikan */ }
     onSave({
-      syncMaintenance,
+      syncMaintenance: isIT && syncMaintenance,
       data: {
+        kategori,
         cabang: f.cabang.trim(),
-        unit_id: f.unit_id || null,
+        unit_id: isIT ? f.unit_id || null : null,
         unit_label: f.unit_label.trim(),
         tanggal_masalah: f.tanggal_masalah,
         keluhan: f.keluhan.trim(),
@@ -341,6 +394,12 @@ function ServisFormModal({ initial, preset, cabangOptions, inventoryItems, onClo
   return (
     <ModalShell onClose={onClose} title={initial ? "Edit Catatan Servis" : "Catat Keluhan / Kerusakan"}>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
+        <Field label="Jenis perangkat" className="sm:col-span-2">
+          <input value={f.kategori} onChange={set("kategori")} list="servis-kategori-options"
+            placeholder="mis. Mesin PIU (capit QRIS)" className={inputClass} style={inputStyle} />
+          <datalist id="servis-kategori-options">{kategoriOptions.map((k) => <option key={k} value={k} />)}</datalist>
+        </Field>
+
         <Field label="Cabang / toko">
           <input value={f.cabang} onChange={set("cabang")} list="servis-cabang-options" placeholder="mis. Timika"
             className={inputClass} style={inputStyle} />
@@ -350,16 +409,19 @@ function ServisFormModal({ initial, preset, cabangOptions, inventoryItems, onClo
           <input type="date" value={f.tanggal_masalah} onChange={set("tanggal_masalah")} className={inputClass} style={inputStyle} />
         </Field>
 
-        <Field label="Unit inventaris terkait (opsional)">
-          <select value={f.unit_id} onChange={pickUnit} className={inputClass} style={inputStyle}>
-            <option value="">— tidak terkait unit tertentu —</option>
-            {unitOptions.map((i) => (
-              <option key={i.id} value={i.id}>{unitName(i)}{i.cabang ? ` · ${i.cabang}` : ""}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Perangkat / bagian yang bermasalah">
-          <input value={f.unit_label} onChange={set("unit_label")} placeholder="mis. Printer kasir 2, WiFi, UPS"
+        {isIT && (
+          <Field label="Unit inventaris terkait (opsional)">
+            <select value={f.unit_id} onChange={pickUnit} className={inputClass} style={inputStyle}>
+              <option value="">— tidak terkait unit tertentu —</option>
+              {unitOptions.map((i) => (
+                <option key={i.id} value={i.id}>{unitName(i)}{i.cabang ? ` · ${i.cabang}` : ""}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        <Field label="Perangkat / bagian yang bermasalah" className={isIT ? "" : "sm:col-span-2"}>
+          <input value={f.unit_label} onChange={set("unit_label")}
+            placeholder={isIT ? "mis. Printer kasir 2, WiFi, UPS" : "mis. Mesin PIU no. 5, modul QRIS"}
             className={inputClass} style={inputStyle} />
         </Field>
 
@@ -392,7 +454,7 @@ function ServisFormModal({ initial, preset, cabangOptions, inventoryItems, onClo
         </Field>
       </div>
 
-      {f.unit_id && f.status === "Selesai" && (
+      {isIT && f.unit_id && f.status === "Selesai" && (
         <label className="flex items-center gap-2 text-sm mb-4">
           <input type="checkbox" checked={syncMaintenance} onChange={(e) => setSyncMaintenance(e.target.checked)} />
           Catat juga di Riwayat Maintenance unit ini (tab Inventaris)
